@@ -645,7 +645,7 @@ interface Toast { id: number; msg: string; ok: boolean; }
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export function ConnectionsPage() {
   const { channels, loading, reload } = useMerchantData();
-  const { user } = useAuth();
+  const { user, merchant } = useAuth();
   const [modal, setModal]   = useState<ModalData | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -684,10 +684,8 @@ export function ConnectionsPage() {
   function closeModal() { setModal(null); }
 
   async function saveChannel(cfg: Record<string, string>, nameOverride?: string) {
-    if (!user || !modal) { toast('يرجى تسجيل الدخول أولاً', false); return; }
+    if (!user || !merchant || !modal) { toast('يرجى تسجيل الدخول أولاً', false); return; }
     try {
-      const { data: merchant } = await supabase.from('merchants').select('id').eq('owner_id', user.id).maybeSingle();
-      if (!merchant?.id) { toast('يرجى تسجيل الدخول أولاً', false); return; }
       if (modal.existingId) {
         const { error } = await supabase.from('channels')
           .update({ status: 'connected', config: cfg, last_sync: new Date().toISOString() })
