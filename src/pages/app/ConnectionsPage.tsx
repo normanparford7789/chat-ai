@@ -687,14 +687,9 @@ export function ConnectionsPage() {
     if (!user || !modal) { toast('يرجى تسجيل الدخول أولاً', false); return; }
     let merchantId = merchant?.id;
     if (!merchantId) {
-      const { data: m } = await supabase.from('merchants').select('id').eq('owner_id', user.id).maybeSingle();
-      if (m?.id) {
-        merchantId = m.id;
-      } else {
-        const { data: created, error } = await supabase.from('merchants').insert({ owner_id: user.id, company_name: 'متجري' }).select('id').single();
-        if (error || !created?.id) { toast('يرجى تسجيل الدخول أولاً', false); return; }
-        merchantId = created.id;
-      }
+      const { data: mId, error: rpcErr } = await supabase.rpc('get_or_create_merchant');
+      if (rpcErr || !mId) { toast('يرجى تسجيل الدخول أولاً', false); return; }
+      merchantId = mId as string;
     }
     try {
       if (modal.existingId) {
