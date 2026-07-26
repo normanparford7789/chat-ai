@@ -31,6 +31,7 @@ import { CustomerPortalPage } from './pages/app/CustomerPortalPage';
 import { SuperAdminPage } from './pages/app/SuperAdminPage';
 import { ApiDocsPage } from './pages/app/ApiDocsPage';
 import { SandboxPage } from './pages/app/SandboxPage';
+import { OnboardingPage } from './pages/onboarding/OnboardingPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -47,7 +48,7 @@ function AppRoutes() {
       <Route path="/contact" element={<ContactPage />} />
       <Route path="/demo" element={<DemoPage />} />
       <Route path="/auth" element={<AuthPage />} />
-      <Route path="/onboarding" element={<Navigate to="/app" replace />} />
+      <Route path="/onboarding" element={<ProtectedRoute><OnboardingPage /></ProtectedRoute>} />
       <Route path="/track/:token" element={<CustomerPortalPage />} />
       <Route path="/app" element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
         <Route index element={<DashboardPage />} />

@@ -9,8 +9,8 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 export const supabase = createClient(
-  supabaseUrl ?? 'https://tovoshqcndgqemnkadhx.supabase.co',
-  supabaseAnonKey ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRvdm9zaHFjbmRncWVtbmthZGh4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUwNDU5MTYsImV4cCI6MjEwMDYyMTkxNn0.BNG_lG1R45UZODMXxC-nBfcGVHWrzDf2poQGkCMcN8c',
+  supabaseUrl ?? 'https://uxoqmeovbtnjzbfjwajx.supabase.co',
+  supabaseAnonKey ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV4b3FtZW92YnRuanpiZmp3YWp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUwNzI1MTAsImV4cCI6MjEwMDY0ODUxMH0.3nQ74Y9r7SxdvtfWp9zXjRtkbAdODtNqPBGw1E77JZ4',
   {
     auth: {
       persistSession: true,

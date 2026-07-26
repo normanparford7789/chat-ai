@@ -29,7 +29,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .select('*')
       .eq('owner_id', uid)
       .maybeSingle();
-    const m = data as Merchant | null;
+    let m = data as Merchant | null;
+    if (!m) {
+      const { data: created } = await supabase
+        .from('merchants')
+        .insert({ owner_id: uid, company_name: 'متجري' })
+        .select('*')
+        .single();
+      m = (created ?? null) as Merchant | null;
+    }
     setMerchant(m);
     return m;
   }
