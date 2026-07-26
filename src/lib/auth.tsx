@@ -92,29 +92,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function signUp(email: string, password: string, metadata: Record<string, string>) {
-    skipMerchantLoad.current = true;
-    const { data, error } = await supabase.auth.signUp({
+    const { error } = await supabase.auth.signUp({
       email,
       password,
       options: { data: metadata },
     });
-    if (error) {
-      skipMerchantLoad.current = false;
-      return { error: error.message };
-    }
-    if (data.user) {
-      const { data: inserted } = await supabase.from('merchants').insert({
-        owner_id: data.user.id,
-        company_name: metadata.company_name || 'شركتي',
-        country: metadata.country || 'SA',
-        business_type: metadata.business_type || 'retail',
-        phone: metadata.phone || null,
-      }).select('*').single();
-      if (inserted) {
-        setMerchant(inserted as Merchant);
-      }
-    }
-    skipMerchantLoad.current = false;
+    if (error) return { error: error.message };
     return { error: null };
   }
 
