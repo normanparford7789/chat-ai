@@ -187,7 +187,7 @@ export interface Workflow {
   merchant_id: string;
   name: string;
   description: string | null;
-  steps: unknown;
+  steps: Array<{ trigger: string; action: string }>;
   is_active: boolean;
   created_at: string;
 }

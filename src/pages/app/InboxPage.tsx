@@ -7,23 +7,24 @@ import { CONVERSATION_STATUSES } from '../../lib/constants';
 import { supabase } from '../../lib/supabase';
 import type { Message } from '../../lib/types';
 import {
-  Bot, Send, Search, Filter, UserPlus, BellOff, Ban, Star, FileText,
-  ShoppingCart, Tag, MapPin, Mail, Zap, ZapOff, Plus, StickyNote, X,
-  Check, ChevronDown, Package, Receipt,
+  Bot, Send, Search, UserPlus, BellOff, Star, FileText,
+  ShoppingCart, Mail, Zap, ZapOff, Plus, StickyNote, X,
+  Check, Package, MessageSquare,
 } from 'lucide-react';
 
 export function InboxPage() {
-  const { conversations, customers, channels, loading } = useMerchantData();
+  const { conversations, customers, channels, loading, reload } = useMerchantData();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [msgLoading, setMsgLoading] = useState(false);
   const [input, setInput] = useState('');
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
-  const [showActions, setShowActions] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const selected = conversations.find((c) => c.id === selectedId);
+  const customer = selected ? customers.find((x) => x.id === selected.customer_id) : null;
+  const channel = selected ? channels.find((c) => c.id === selected.channel_id) : null;
 
   useEffect(() => {
     if (selectedId) {
@@ -43,6 +44,18 @@ export function InboxPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Realtime subscription for messages
+  useEffect(() => {
+    if (!selectedId) return;
+    const sub = supabase
+      .channel(`messages:${selectedId}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${selectedId}` }, (payload) => {
+        setMessages((prev) => [...prev, payload.new as Message]);
+      })
+      .subscribe();
+    return () => { sub.unsubscribe(); };
+  }, [selectedId]);
+
   async function handleSend() {
     if (!input.trim() || !selectedId) return;
     const content = input;
@@ -52,22 +65,37 @@ export function InboxPage() {
     setMessages(msgs);
   }
 
+  // ✅ FIXED: was window.location.reload() — now uses proper state update
   async function toggleAi() {
     if (!selected) return;
-    await supabase.from('conversations').update({ ai_enabled: !selected.ai_enabled }).eq('id', selected.id);
-    window.location.reload();
+    await supabase
+      .from('conversations')
+      .update({ ai_enabled: !selected.ai_enabled })
+      .eq('id', selected.id);
+    reload();
   }
 
+  // ✅ FIXED: was window.location.reload() — now uses proper state update
   async function changeStatus(status: string) {
     if (!selected) return;
     await supabase.from('conversations').update({ status }).eq('id', selected.id);
-    window.location.reload();
+    reload();
+  }
+
+  async function markRead() {
+    if (!selected) return;
+    await supabase.from('conversations').update({ unread_count: 0 }).eq('id', selected.id);
+    reload();
   }
 
   const filteredConvs = conversations.filter((c) => {
-    const customer = customers.find((x) => x.id === c.customer_id);
-    const matchesSearch = !search || customer?.name?.toLowerCase().includes(search.toLowerCase()) || c.last_message?.toLowerCase().includes(search.toLowerCase());
-    const matchesFilter = filter === 'all' || c.status === filter || (filter === 'ai' && c.ai_enabled);
+    const cust = customers.find((x) => x.id === c.customer_id);
+    const matchesSearch = !search || cust?.name?.toLowerCase().includes(search.toLowerCase()) || c.last_message?.toLowerCase().includes(search.toLowerCase());
+    const matchesFilter =
+      filter === 'all' ||
+      c.status === filter ||
+      (filter === 'ai' && c.ai_enabled) ||
+      (filter === 'unread' && c.unread_count > 0);
     return matchesSearch && matchesFilter;
   });
 
@@ -89,50 +117,63 @@ export function InboxPage() {
           <div className="p-3 border-b border-slate-100">
             <div className="relative mb-2">
               <Search size={16} className="absolute right-3 top-2.5 text-slate-400" />
-              <input className="input pr-9 py-2 text-sm" placeholder="بحث..." value={search} onChange={(e) => setSearch(e.target.value)} />
+              <input
+                className="input pr-9 py-2 text-sm"
+                placeholder="بحث..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
             </div>
-            <div className="flex gap-1">
+            <div className="flex gap-1 overflow-x-auto">
               {[
-                { v: 'all', l: 'الكل' },
-                { v: 'open', l: 'مفتوحة' },
-                { v: 'assigned', l: 'محالة' },
-                { v: 'ai', l: 'AI' },
+                { value: 'all', label: 'الكل' },
+                { value: 'open', label: 'مفتوح' },
+                { value: 'pending', label: 'انتظار' },
+                { value: 'ai', label: 'AI' },
+                { value: 'unread', label: 'غير مقروء' },
               ].map((f) => (
-                <button key={f.v} onClick={() => setFilter(f.v)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${filter === f.v ? 'bg-sky-500 text-white' : 'bg-slate-100 text-slate-600'}`}>
-                  {f.l}
+                <button
+                  key={f.value}
+                  onClick={() => setFilter(f.value)}
+                  className={`text-xs px-2.5 py-1 rounded-lg font-semibold whitespace-nowrap transition-colors ${filter === f.value ? 'bg-sky-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                >
+                  {f.label}
                 </button>
               ))}
             </div>
           </div>
+
           <div className="flex-1 overflow-y-auto">
             {filteredConvs.length === 0 ? (
-              <div className="p-8 text-center text-sm text-slate-400">لا توجد محادثات</div>
+              <EmptyState icon={<MessageSquare size={24} />} title="لا توجد محادثات" description="ستظهر محادثات عملائك هنا" />
             ) : (
               filteredConvs.map((c) => {
-                const customer = customers.find((x) => x.id === c.customer_id);
+                const cust = customers.find((x) => x.id === c.customer_id);
+                const ch = channels.find((x) => x.id === c.channel_id);
                 const status = CONVERSATION_STATUSES.find((s) => s.value === c.status);
+                const isSelected = c.id === selectedId;
                 return (
                   <button
                     key={c.id}
-                    onClick={() => setSelectedId(c.id)}
-                    className={`w-full flex items-start gap-3 p-3 text-right border-b border-slate-50 hover:bg-slate-50 ${selectedId === c.id ? 'bg-sky-50' : ''}`}
+                    onClick={() => { setSelectedId(c.id); if (c.unread_count > 0) markRead(); }}
+                    className={`w-full flex items-start gap-3 p-3 border-b border-slate-50 text-right transition-colors ${isSelected ? 'bg-sky-50' : 'hover:bg-slate-50'}`}
                   >
-                    <div className="h-10 w-10 rounded-full bg-gradient-to-br from-slate-200 to-slate-300 flex items-center justify-center text-sm font-bold text-slate-600 flex-shrink-0">
-                      {customer?.name?.charAt(0) ?? '؟'}
+                    <div className={`h-10 w-10 rounded-full flex-shrink-0 flex items-center justify-center text-white text-sm font-bold ${isSelected ? 'bg-sky-500' : 'bg-gradient-to-br from-sky-400 to-blue-600'}`}>
+                      {cust?.name?.charAt(0) ?? '؟'}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-bold text-slate-900 truncate">{customer?.name ?? 'عميل جديد'}</span>
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-sm font-bold text-slate-900 truncate">{cust?.name ?? 'عميل جديد'}</span>
                         <span className="text-xs text-slate-400 flex-shrink-0">{timeAgo(c.last_message_at)}</span>
                       </div>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        {c.ai_enabled && <Bot size={12} className="text-indigo-500" />}
-                        {customer?.vip && <Badge color="amber">VIP</Badge>}
-                        {status && <span className={`text-xs ${status.color === 'green' ? 'text-green-600' : status.color === 'amber' ? 'text-amber-600' : 'text-slate-500'}`}>• {status.label}</span>}
+                      <p className="text-xs text-slate-500 truncate mt-0.5">{c.last_message ?? 'لا توجد رسائل'}</p>
+                      <div className="flex items-center gap-1 mt-1">
+                        {ch && <span className="text-xs text-slate-400">{ch.name}</span>}
+                        {c.ai_enabled && <Badge color="indigo"><Bot size={9} /> AI</Badge>}
+                        {status && <Badge color={status.color as 'green' | 'amber' | 'sky' | 'gray'}>{status.label}</Badge>}
+                        {c.unread_count > 0 && <span className="h-4 w-4 rounded-full bg-red-500 text-white text-xs flex items-center justify-center font-bold">{c.unread_count}</span>}
                       </div>
-                      <div className="text-xs text-slate-500 truncate mt-0.5">{c.last_message ?? 'ابدأ المحادثة'}</div>
                     </div>
-                    {c.unread_count > 0 && <div className="h-5 w-5 rounded-full bg-sky-500 text-white text-xs flex items-center justify-center flex-shrink-0">{c.unread_count}</div>}
                   </button>
                 );
               })
@@ -141,167 +182,152 @@ export function InboxPage() {
         </div>
 
         {/* Chat area */}
-        <div className="flex-1 card flex flex-col min-w-0">
-          {!selected ? (
-            <div className="flex-1 flex items-center justify-center">
-              <EmptyState icon={<Send size={28} />} title="اختر محادثة" description="اختر محادثة من القائمة لعرض الرسائل." />
-            </div>
-          ) : (
-            <>
-              {/* Chat header */}
-              <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-full bg-gradient-to-br from-sky-400 to-blue-600 flex items-center justify-center text-white font-bold">
-                    {customers.find((x) => x.id === selected.customer_id)?.name?.charAt(0) ?? '؟'}
-                  </div>
-                  <div>
-                    <div className="font-bold text-slate-900 text-sm">{customers.find((x) => x.id === selected.customer_id)?.name ?? 'عميل جديد'}</div>
-                    <div className="text-xs text-slate-500">{channels.find((x) => x.id === selected.channel_id)?.name ?? 'قناة'}</div>
-                  </div>
+        {selected ? (
+          <div className="flex-1 card flex flex-col min-w-0">
+            {/* Chat header */}
+            <div className="border-b border-slate-100 p-3 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-gradient-to-br from-sky-400 to-blue-600 flex items-center justify-center text-white text-sm font-bold">
+                  {customer?.name?.charAt(0) ?? '؟'}
                 </div>
-                <div className="flex items-center gap-1">
-                  <button onClick={toggleAi} className={`p-2 rounded-lg ${selected.ai_enabled ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-400'}`} title={selected.ai_enabled ? 'إيقاف الذكاء' : 'تشغيل الذكاء'}>
-                    {selected.ai_enabled ? <Bot size={18} /> : <ZapOff size={18} />}
-                  </button>
-                  <button className="p-2 rounded-lg text-slate-400 hover:bg-slate-100" title="تحويل لموظف"><UserPlus size={18} /></button>
-                  <button className="p-2 rounded-lg text-slate-400 hover:bg-slate-100" title="ملاحظة"><StickyNote size={18} /></button>
-                  <button className="p-2 rounded-lg text-slate-400 hover:bg-slate-100" title="صامت"><BellOff size={18} /></button>
-                  <button className="p-2 rounded-lg text-slate-400 hover:bg-slate-100" title="مهم"><Star size={18} /></button>
-                  <button className="p-2 rounded-lg text-slate-400 hover:bg-slate-100" title="حظر"><Ban size={18} /></button>
-                  <div className="relative">
-                    <button onClick={() => setShowActions(!showActions)} className="p-2 rounded-lg text-slate-400 hover:bg-slate-100" title="إجراءات"><ChevronDown size={18} /></button>
-                    {showActions && (
-                      <div className="absolute left-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg py-1 z-10 w-48">
-                        <button className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"><Tag size={16} /> إرسال عرض</button>
-                        <button className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"><Receipt size={16} /> إرسال فاتورة</button>
-                        <button className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"><MapPin size={16} /> إرسال موقع</button>
-                        <button className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"><Package size={16} /> إرسال كتالوج</button>
-                        <Link to="/app/orders/new" className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"><ShoppingCart size={16} /> إنشاء طلب</Link>
-                        <hr className="my-1 border-slate-100" />
-                        <button onClick={() => changeStatus('closed')} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50"><X size={16} /> إغلاق المحادثة</button>
-                      </div>
-                    )}
+                <div>
+                  <div className="font-bold text-slate-900 text-sm">{customer?.name ?? 'عميل جديد'}</div>
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                    {channel && <span>{channel.name}</span>}
+                    {customer?.phone && <span>{customer.phone}</span>}
                   </div>
                 </div>
               </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={toggleAi}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${selected.ai_enabled ? 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                >
+                  {selected.ai_enabled ? <><Bot size={14} /> AI شغّال</> : <><ZapOff size={14} /> AI معطّل</>}
+                </button>
+                <select
+                  className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 text-slate-600 bg-white"
+                  value={selected.status}
+                  onChange={(e) => changeStatus(e.target.value)}
+                >
+                  {CONVERSATION_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </select>
+              </div>
+            </div>
 
-              {/* Messages */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50">
-                {msgLoading ? (
-                  <div className="flex justify-center py-8"><Spinner /></div>
-                ) : messages.length === 0 ? (
-                  <div className="text-center text-sm text-slate-400 py-8">لا توجد رسائل بعد. ابدأ بالرد!</div>
-                ) : (
-                  messages.map((msg) => (
-                    <div key={msg.id} className={`flex gap-2 ${msg.sender === 'customer' ? '' : 'justify-end'} animate-fade-in`}>
-                      {msg.sender === 'customer' && (
-                        <div className="h-8 w-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-600 flex-shrink-0">ع</div>
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50">
+              {msgLoading ? (
+                <div className="flex justify-center py-8"><Spinner /></div>
+              ) : messages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-slate-400">
+                  <MessageSquare size={32} className="mb-2" />
+                  <p className="text-sm">لا توجد رسائل بعد</p>
+                </div>
+              ) : (
+                messages.map((m) => {
+                  const isAgent = m.sender === 'agent' || m.sender === 'ai';
+                  return (
+                    <div key={m.id} className={`flex gap-2 ${isAgent ? 'justify-end' : 'justify-start'}`}>
+                      {!isAgent && (
+                        <div className="h-8 w-8 rounded-full bg-slate-300 flex items-center justify-center text-xs font-bold text-slate-600 flex-shrink-0">
+                          {customer?.name?.charAt(0) ?? 'ع'}
+                        </div>
                       )}
-                      <div className={`max-w-[70%] ${msg.sender === 'customer' ? 'bg-white border border-slate-200 text-slate-800 rounded-2xl rounded-tr-sm' : msg.sender === 'ai' ? 'bg-indigo-500 text-white rounded-2xl rounded-tl-sm' : 'bg-sky-500 text-white rounded-2xl rounded-tl-sm'} px-4 py-2.5`}>
-                        <div className="text-sm">{msg.content}</div>
-                        <div className={`text-xs mt-1 flex items-center gap-1 ${msg.sender === 'customer' ? 'text-slate-400' : 'text-white/70'}`}>
-                          {msg.sender === 'ai' && <><Bot size={10} /> رد آلي</>}
-                          {msg.sender === 'agent' && <Check size={10} />}
-                          {formatDateTime(msg.created_at)}
+                      <div className={`max-w-[70%] ${isAgent ? 'items-end' : 'items-start'} flex flex-col gap-0.5`}>
+                        <div className={`rounded-2xl px-4 py-2.5 text-sm ${isAgent ? 'bg-sky-500 text-white rounded-tl-sm' : 'bg-white border border-slate-200 text-slate-800 rounded-tr-sm shadow-sm'}`}>
+                          {m.content}
+                        </div>
+                        <div className="flex items-center gap-1 px-1">
+                          <span className="text-xs text-slate-400">{timeAgo(m.created_at)}</span>
+                          {m.is_auto && <Badge color="indigo"><Bot size={9} /> تلقائي</Badge>}
                         </div>
                       </div>
-                      {msg.sender !== 'customer' && (
-                        <div className={`h-8 w-8 rounded-full flex items-center justify-center flex-shrink-0 ${msg.sender === 'ai' ? 'bg-indigo-500' : 'bg-sky-500'}`}>
-                          {msg.sender === 'ai' ? <Bot size={16} className="text-white" /> : <span className="text-white text-xs font-bold">أ</span>}
+                      {isAgent && (
+                        <div className={`h-8 w-8 rounded-full flex items-center justify-center flex-shrink-0 ${m.is_auto ? 'bg-indigo-500' : 'bg-sky-500'}`}>
+                          {m.is_auto ? <Bot size={14} className="text-white" /> : <span className="text-white text-xs font-bold">أ</span>}
                         </div>
                       )}
                     </div>
-                  ))
-                )}
-                <div ref={messagesEndRef} />
-              </div>
+                  );
+                })
+              )}
+              <div ref={messagesEndRef} />
+            </div>
 
-              {/* Input */}
-              <div className="p-3 border-t border-slate-100">
-                <div className="flex items-center gap-2">
-                  <button className="p-2 rounded-lg text-slate-400 hover:bg-slate-100" title="رد جاهز"><FileText size={18} /></button>
-                  <input
-                    className="input flex-1"
-                    placeholder="اكتب ردك..."
+            {/* Message input */}
+            <div className="border-t border-slate-100 p-3">
+              <div className="flex gap-2 items-end">
+                <div className="flex-1 relative">
+                  <textarea
+                    className="input resize-none text-sm py-2 min-h-[40px] max-h-[120px]"
+                    placeholder="اكتب ردًا..."
+                    rows={1}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
                   />
-                  <button onClick={handleSend} className="btn-primary" disabled={!input.trim()}>
-                    <Send size={18} />
-                  </button>
                 </div>
+                <button
+                  onClick={handleSend}
+                  disabled={!input.trim()}
+                  className="btn-primary btn-sm h-10 px-4"
+                >
+                  <Send size={16} />
+                </button>
               </div>
-            </>
-          )}
-        </div>
-
-        {/* Customer details */}
-        {selected && (
-          <div className="hidden xl:block w-72 flex-shrink-0 card p-4 overflow-y-auto">
-            <CustomerPanel conversationId={selected.id} customerId={selected.customer_id} />
+              <div className="flex gap-1.5 mt-2">
+                <button className="btn-ghost btn-sm text-xs"><FileText size={12} /> قالب</button>
+                <button className="btn-ghost btn-sm text-xs"><ShoppingCart size={12} /> طلب</button>
+                <button className="btn-ghost btn-sm text-xs"><StickyNote size={12} /> ملاحظة</button>
+                <button className="btn-ghost btn-sm text-xs"><Package size={12} /> منتج</button>
+              </div>
+            </div>
           </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function CustomerPanel({ customerId }: { conversationId: string; customerId: string | null }) {
-  const { customers, orders } = useMerchantData();
-  const customer = customers.find((c) => c.id === customerId);
-  const customerOrders = orders.filter((o) => o.customer_id === customerId);
-
-  if (!customer) return <div className="text-sm text-slate-400 text-center py-8">لا توجد بيانات للعميل</div>;
-
-  return (
-    <div className="space-y-4">
-      <div className="text-center">
-        <div className="h-16 w-16 rounded-full bg-gradient-to-br from-sky-400 to-blue-600 flex items-center justify-center text-white text-2xl font-bold mx-auto mb-2">
-          {customer.name?.charAt(0) ?? '؟'}
-        </div>
-        <div className="font-bold text-slate-900">{customer.name ?? 'عميل'}</div>
-        <div className="text-xs text-slate-500">{customer.phone ?? '—'}</div>
-        <div className="flex justify-center gap-1.5 mt-2">
-          {customer.vip && <Badge color="amber">VIP</Badge>}
-          {customer.total_orders > 0 && <Badge color="blue">{customer.total_orders} طلب</Badge>}
-        </div>
-      </div>
-
-      <div className="space-y-2 text-sm">
-        <div className="flex justify-between"><span className="text-slate-500">المدينة:</span><span className="font-semibold text-slate-700">{customer.city ?? '—'}</span></div>
-        <div className="flex justify-between"><span className="text-slate-500">القناة:</span><span className="font-semibold text-slate-700">{customer.channel ?? '—'}</span></div>
-        <div className="flex justify-between"><span className="text-slate-500">آخر تواصل:</span><span className="font-semibold text-slate-700">{timeAgo(customer.last_contact)}</span></div>
-        <div className="flex justify-between"><span className="text-slate-500">إجمالي المشتريات:</span><span className="font-semibold text-slate-700">{formatCurrency(Number(customer.total_spent))}</span></div>
-      </div>
-
-      {customer.tags.length > 0 && (
-        <div>
-          <div className="text-xs font-bold text-slate-500 mb-1.5">العلامات</div>
-          <div className="flex flex-wrap gap-1">{customer.tags.map((t) => <Badge key={t} color="sky">{t}</Badge>)}</div>
-        </div>
-      )}
-
-      <div>
-        <div className="text-xs font-bold text-slate-500 mb-2">آخر الطلبات</div>
-        {customerOrders.length === 0 ? (
-          <p className="text-xs text-slate-400">لا توجد طلبات</p>
         ) : (
-          <div className="space-y-1.5">
-            {customerOrders.slice(0, 3).map((o) => (
-              <div key={o.id} className="flex items-center justify-between text-xs">
-                <span className="font-semibold text-slate-700">{o.order_number ?? `#${o.id.slice(0, 6)}`}</span>
-                <span className="text-slate-500">{formatCurrency(Number(o.total))}</span>
-              </div>
-            ))}
+          <div className="flex-1 card flex items-center justify-center">
+            <EmptyState icon={<MessageSquare size={32} />} title="اختر محادثة" description="اختر محادثة من القائمة للبدء" />
           </div>
         )}
-      </div>
 
-      <div className="space-y-1.5 pt-2 border-t border-slate-100">
-        <button className="w-full btn-secondary btn-sm"><Mail size={14} /> إرسال رسالة</button>
-        <button className="w-full btn-secondary btn-sm"><ShoppingCart size={14} /> إنشاء طلب</button>
-        <button className="w-full btn-secondary btn-sm"><StickyNote size={14} /> إضافة ملاحظة</button>
+        {/* Customer sidebar */}
+        {selected && customer && (
+          <div className="w-64 flex-shrink-0 card flex flex-col p-4 space-y-4 overflow-y-auto">
+            <div className="text-center">
+              <div className="h-14 w-14 rounded-full bg-gradient-to-br from-sky-400 to-blue-600 flex items-center justify-center text-white text-2xl font-bold mx-auto mb-2">
+                {customer.name?.charAt(0) ?? '؟'}
+              </div>
+              <div className="font-bold text-slate-900 text-sm">{customer.name ?? 'عميل'}</div>
+              <div className="text-xs text-slate-500">{customer.phone ?? '—'}</div>
+              <div className="flex justify-center gap-1.5 mt-2">
+                {customer.vip && <Badge color="amber">VIP</Badge>}
+                {customer.total_orders > 0 && <Badge color="blue">{customer.total_orders} طلب</Badge>}
+              </div>
+            </div>
+
+            <div className="space-y-1.5 text-sm">
+              <div className="flex justify-between py-1.5 border-b border-slate-50"><span className="text-slate-500">المدينة</span><span className="font-semibold text-slate-700 text-xs">{customer.city ?? '—'}</span></div>
+              <div className="flex justify-between py-1.5 border-b border-slate-50"><span className="text-slate-500">القناة</span><span className="font-semibold text-slate-700 text-xs">{customer.channel ?? '—'}</span></div>
+              <div className="flex justify-between py-1.5 border-b border-slate-50"><span className="text-slate-500">آخر تواصل</span><span className="font-semibold text-slate-700 text-xs">{timeAgo(customer.last_contact)}</span></div>
+              <div className="flex justify-between py-1.5"><span className="text-slate-500">المشتريات</span><span className="font-semibold text-sky-600 text-xs">{formatCurrency(Number(customer.total_spent))}</span></div>
+            </div>
+
+            {customer.tags.length > 0 && (
+              <div>
+                <div className="text-xs font-bold text-slate-500 mb-1.5">العلامات</div>
+                <div className="flex flex-wrap gap-1">{customer.tags.map((t) => <Badge key={t} color="sky">{t}</Badge>)}</div>
+              </div>
+            )}
+
+            <div className="space-y-1.5 pt-2 border-t border-slate-100">
+              <Link to={`/app/customers/${customer.id}`} className="w-full btn-secondary btn-sm flex items-center justify-center gap-1.5">
+                <Star size={13} /> عرض الملف
+              </Link>
+              <button className="w-full btn-secondary btn-sm"><Mail size={13} /> إرسال رسالة</button>
+              <button className="w-full btn-secondary btn-sm"><ShoppingCart size={13} /> إنشاء طلب</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
