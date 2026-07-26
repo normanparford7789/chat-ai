@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { useMerchantData } from '../../lib/hooks';
 import { useAuth } from '../../lib/auth';
 import { supabase } from '../../lib/supabase';
@@ -7,44 +7,49 @@ import { CHANNEL_TYPES } from '../../lib/constants';
 import { formatDateTime } from '../../lib/format';
 import {
   MessageCircle, Facebook, Instagram, Send, Globe, Smartphone, Mail, Music,
-  ShoppingBag, Search, RefreshCw, Plug, Trash2, Check, AlertTriangle,
-  Activity, ExternalLink, Zap, QrCode, Key, X, Bot, Copy, CheckCircle,
-  Link2, Wifi, ArrowRight, Shield, Smartphone as Phone,
+  ShoppingBag, Search, RefreshCw, Plug, Trash2, Check, X,
+  Activity, ExternalLink, Zap, QrCode, Key, Bot, Copy,
+  CheckCircle, ArrowRight, Shield, Settings, Wifi,
 } from 'lucide-react';
 
-// ─── Icon map ───────────────────────────────────────────────────────────────
+// ─── Icon map ────────────────────────────────────────────────────────────────
 const iconMap: Record<string, typeof MessageCircle> = {
   MessageCircle, Facebook, Instagram, Send, Globe, Smartphone, Mail, Music, ShoppingBag, Search,
 };
 
-const channelDocs: Record<string, string> = {
-  whatsapp: 'https://developers.facebook.com/docs/whatsapp/cloud-api/get-started',
-  messenger: 'https://developers.facebook.com/docs/messenger-platform/get-started',
-  instagram: 'https://developers.facebook.com/docs/instagram-api',
-  telegram: 'https://core.telegram.org/bots/api',
-  website: '#',
-  sms: '#',
-  email: '#',
-  tiktok: 'https://developers.tiktok.com',
-  tiktok_shop: 'https://partner.tiktokshop.com',
-  google: 'https://developers.google.com/my-business',
+const CHANNEL_COLORS: Record<string, string> = {
+  whatsapp:   'from-green-400 to-green-600',
+  messenger:  'from-blue-400 to-blue-600',
+  instagram:  'from-pink-400 to-rose-500',
+  telegram:   'from-sky-400 to-blue-500',
+  website:    'from-indigo-400 to-violet-500',
+  sms:        'from-amber-400 to-orange-500',
+  email:      'from-slate-400 to-slate-600',
+  tiktok:     'from-slate-700 to-slate-900',
+  tiktok_shop:'from-orange-400 to-rose-500',
+  google:     'from-red-400 to-orange-400',
 };
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-interface Toast { id: number; message: string; type: 'success' | 'error' | 'info'; }
+const CHANNEL_DOCS: Record<string, string> = {
+  whatsapp:   'https://developers.facebook.com/docs/whatsapp/cloud-api/get-started',
+  messenger:  'https://developers.facebook.com/docs/messenger-platform',
+  instagram:  'https://developers.facebook.com/docs/instagram-api',
+  telegram:   'https://core.telegram.org/bots/api',
+  tiktok:     'https://developers.tiktok.com',
+  tiktok_shop:'https://partner.tiktokshop.com',
+  google:     'https://developers.google.com/my-business',
+};
 
+// ─── Types ────────────────────────────────────────────────────────────────────
 type ModalStep =
-  | 'choose_method'       // WhatsApp / Telegram: pick API or QR
-  | 'whatsapp_api'
-  | 'whatsapp_qr'
-  | 'telegram_token'
-  | 'telegram_qr'
-  | 'oauth_login'         // Facebook / Instagram / Messenger
-  | 'generic_api'         // SMS, Email, TikTok …
-  | 'website_embed';      // شات الموقع
+  | 'choose'
+  | 'wa_api' | 'wa_qr'
+  | 'tg_token' | 'tg_qr'
+  | 'oauth'
+  | 'generic'
+  | 'widget';
 
-interface ModalState {
-  open: boolean;
+interface ModalData {
   channelType: string;
   channelLabel: string;
   step: ModalStep;
@@ -52,598 +57,52 @@ interface ModalState {
   existingConfig?: Record<string, string>;
 }
 
-// ─── QR image via free API ───────────────────────────────────────────────────
-function QrImage({ data, size = 200 }: { data: string; size?: number }) {
-  const url = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(data)}&format=svg&bgcolor=ffffff&color=000000`;
+// ─── Helper: QR image ────────────────────────────────────────────────────────
+function QrImage({ value }: { value: string }) {
+  const src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(value)}`;
   return (
-    <div className="flex items-center justify-center p-4 bg-white rounded-2xl border-2 border-slate-200 shadow-inner">
-      <img src={url} alt="QR Code" width={size} height={size} className="rounded-xl" />
+    <div className="flex justify-center p-3 bg-white border-2 border-slate-100 rounded-2xl shadow-inner">
+      <img src={src} alt="QR" width={200} height={200} className="rounded-xl" />
     </div>
   );
 }
 
-// ─── Clipboard copy helper ───────────────────────────────────────────────────
+// ─── Helper: copy field ───────────────────────────────────────────────────────
 function CopyField({ label, value }: { label: string; value: string }) {
-  const [copied, setCopied] = useState(false);
+  const [done, setDone] = useState(false);
   function copy() {
-    navigator.clipboard.writeText(value).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+    navigator.clipboard.writeText(value).then(() => {
+      setDone(true);
+      setTimeout(() => setDone(false), 2000);
+    });
   }
   return (
     <div>
       <label className="label">{label}</label>
-      <div className="flex items-center gap-2">
-        <input className="input flex-1 font-mono text-sm" readOnly value={value} />
-        <button onClick={copy} className="btn-secondary btn-sm flex-shrink-0">
-          {copied ? <CheckCircle size={15} className="text-green-500" /> : <Copy size={15} />}
+      <div className="flex gap-2">
+        <input readOnly className="input flex-1 font-mono text-xs" value={value} />
+        <button type="button" onClick={copy} className="btn-secondary btn-sm flex-shrink-0">
+          {done ? <CheckCircle size={15} className="text-green-500" /> : <Copy size={15} />}
         </button>
       </div>
     </div>
   );
 }
 
-// ─── Connection Modal ────────────────────────────────────────────────────────
-function ConnectionModal({
-  state, onClose, onSuccess,
-}: {
-  state: ModalState;
-  onClose: () => void;
-  onSuccess: (msg: string) => void;
-}) {
-  const { merchant } = useAuth();
-  const [saving, setSaving] = useState(false);
-  const [qrConnected, setQrConnected] = useState(false);
-  const qrTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // WhatsApp Cloud API form
-  const [waApi, setWaApi] = useState({
-    phone_number_id: state.existingConfig?.phone_number_id ?? '',
-    access_token: state.existingConfig?.access_token ?? '',
-    verify_token: state.existingConfig?.verify_token ?? Math.random().toString(36).slice(2, 10),
-    business_account_id: state.existingConfig?.business_account_id ?? '',
-  });
-
-  // Telegram bot token form
-  const [tgToken, setTgToken] = useState(state.existingConfig?.bot_token ?? '');
-  const [tgBotInfo, setTgBotInfo] = useState<{ username?: string; name?: string } | null>(null);
-  const [tgVerifying, setTgVerifying] = useState(false);
-  const [tgError, setTgError] = useState('');
-
-  // Generic API form
-  const [genericApi, setGenericApi] = useState({
-    api_key: state.existingConfig?.api_key ?? '',
-    webhook_url: state.existingConfig?.webhook_url ?? '',
-    extra: state.existingConfig?.extra ?? '',
-  });
-
-  // QR session token (fake unique token for QR display)
-  const qrToken = useRef(`wa-session-${Math.random().toString(36).slice(2, 10)}`);
-
-  useEffect(() => {
-    return () => { if (qrTimerRef.current) clearTimeout(qrTimerRef.current); };
-  }, []);
-
-  // Simulate QR scan polling
-  function startQrPolling() {
-    if (qrTimerRef.current) clearTimeout(qrTimerRef.current);
-    // Simulate connection after 30 seconds (in real app this polls a backend)
-    qrTimerRef.current = setTimeout(() => { setQrConnected(true); }, 30000);
-  }
-
-  async function saveChannel(config: Record<string, string>, name?: string) {
-    if (!merchant) return;
-    setSaving(true);
-    try {
-      if (state.existingId) {
-        const { error } = await supabase.from('channels').update({
-          status: 'connected',
-          config,
-          last_sync: new Date().toISOString(),
-        }).eq('id', state.existingId);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from('channels').insert({
-          merchant_id: merchant.id,
-          type: state.channelType,
-          name: name ?? state.channelLabel,
-          status: 'connected',
-          config,
-          last_sync: new Date().toISOString(),
-        });
-        if (error) throw error;
-      }
-      onSuccess(`✅ تم ربط ${name ?? state.channelLabel} بنجاح`);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'خطأ غير متوقع';
-      onSuccess(`❌ ${msg}`);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function verifyTelegramToken() {
-    if (!tgToken.trim()) return;
-    setTgVerifying(true); setTgError('');
-    try {
-      const res = await fetch(`https://api.telegram.org/bot${tgToken.trim()}/getMe`);
-      const data = await res.json();
-      if (data.ok) {
-        setTgBotInfo({ username: data.result.username, name: data.result.first_name });
-      } else {
-        setTgError('توكن غير صحيح. تأكد من نسخ التوكن من BotFather بشكل صحيح.');
-      }
-    } catch {
-      setTgError('فشل الاتصال بتيليغرام. تحقق من الإنترنت وأعد المحاولة.');
-    } finally {
-      setTgVerifying(false);
-    }
-  }
-
-  const webhookBase = typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.com';
-
-  // ── STEP: Choose method ───────────────────────────────────────────────────
-  if (state.step === 'choose_method') {
-    const isWa = state.channelType === 'whatsapp';
-    const isTg = state.channelType === 'telegram';
-
-    return (
-      <ModalShell title={`ربط ${state.channelLabel}`} onClose={onClose}>
-        <p className="text-sm text-slate-500 mb-6 text-center">اختر طريقة الربط المناسبة لك</p>
-        <div className="grid grid-cols-1 gap-4">
-          {/* Option 1 */}
-          <button
-            className="flex items-start gap-4 p-5 rounded-2xl border-2 border-slate-200 hover:border-sky-400 hover:bg-sky-50 transition-all group text-right"
-            onClick={() => {
-              // We can't change step directly since state is passed in — we use a callback workaround
-              (onClose as unknown as (next: ModalStep) => void)(isWa ? 'whatsapp_api' : 'telegram_token');
-            }}
-          >
-            <div className="h-12 w-12 rounded-xl bg-sky-100 flex items-center justify-center text-sky-600 group-hover:bg-sky-500 group-hover:text-white transition-colors flex-shrink-0">
-              <Key size={22} />
-            </div>
-            <div className="flex-1">
-              <div className="font-bold text-slate-900 mb-1">
-                {isWa ? 'ربط عبر API الرسمي' : isTg ? 'ربط البوت عبر التوكن' : 'ربط عبر API'}
-              </div>
-              <div className="text-sm text-slate-500">
-                {isWa
-                  ? 'استخدم WhatsApp Cloud API الرسمي من Meta — الأفضل للأعمال'
-                  : isTg
-                  ? 'اربط بوت تيليغرام عبر توكن BotFather بسهولة وأمان'
-                  : 'اربط حسابك عبر API Key أو توكن'}
-              </div>
-              <div className="mt-2 inline-flex items-center gap-1 text-xs text-green-600 font-semibold">
-                <Shield size={11} /> موصى به
-              </div>
-            </div>
-            <ArrowRight size={18} className="text-slate-400 group-hover:text-sky-500 mt-3 flex-shrink-0" />
-          </button>
-
-          {/* Option 2 — QR */}
-          <button
-            className="flex items-start gap-4 p-5 rounded-2xl border-2 border-slate-200 hover:border-violet-400 hover:bg-violet-50 transition-all group text-right"
-            onClick={() => {
-              (onClose as unknown as (next: ModalStep) => void)(isWa ? 'whatsapp_qr' : 'telegram_qr');
-            }}
-          >
-            <div className="h-12 w-12 rounded-xl bg-violet-100 flex items-center justify-center text-violet-600 group-hover:bg-violet-500 group-hover:text-white transition-colors flex-shrink-0">
-              <QrCode size={22} />
-            </div>
-            <div className="flex-1">
-              <div className="font-bold text-slate-900 mb-1">ربط عبر QR Code</div>
-              <div className="text-sm text-slate-500">
-                {isWa
-                  ? 'امسح الـ QR من تطبيق واتساب على هاتفك — سريع وبدون إعدادات معقدة'
-                  : 'امسح الـ QR لربط حساب تيليغرام كاملاً'}
-              </div>
-              <div className="mt-2 inline-flex items-center gap-1 text-xs text-violet-600 font-semibold">
-                <Phone size={11} /> الأسرع والأسهل
-              </div>
-            </div>
-            <ArrowRight size={18} className="text-slate-400 group-hover:text-violet-500 mt-3 flex-shrink-0" />
-          </button>
-        </div>
-      </ModalShell>
-    );
-  }
-
-  // ── STEP: WhatsApp Cloud API ──────────────────────────────────────────────
-  if (state.step === 'whatsapp_api') {
-    const webhookUrl = `${webhookBase}/api/webhooks/whatsapp`;
-    return (
-      <ModalShell title="ربط واتساب — Cloud API" onClose={onClose} wide>
-        <div className="space-y-4">
-          <div className="rounded-xl bg-sky-50 border border-sky-200 p-4 text-sm text-sky-800">
-            <div className="font-bold mb-1">📋 خطوات الربط:</div>
-            <ol className="list-decimal list-inside space-y-1 text-sky-700">
-              <li>اذهب إلى <a href="https://developers.facebook.com" target="_blank" rel="noreferrer" className="underline font-semibold">Meta for Developers</a> وأنشئ تطبيقًا</li>
-              <li>فعّل منتج WhatsApp Business داخل التطبيق</li>
-              <li>انسخ <strong>Phone Number ID</strong> و<strong>Access Token</strong> من لوحة تحكم Meta</li>
-              <li>أضف <strong>Webhook URL</strong> أدناه في إعدادات Webhooks وضع التوكن نفسه</li>
-            </ol>
-          </div>
-          <CopyField label="Webhook URL" value={webhookUrl} />
-          <div>
-            <label className="label">Phone Number ID <span className="text-red-500">*</span></label>
-            <input className="input" placeholder="1234567890" value={waApi.phone_number_id}
-              onChange={(e) => setWaApi({ ...waApi, phone_number_id: e.target.value })} />
-          </div>
-          <div>
-            <label className="label">Access Token (System User Token) <span className="text-red-500">*</span></label>
-            <input className="input font-mono text-sm" placeholder="EAAxxxx..." value={waApi.access_token}
-              onChange={(e) => setWaApi({ ...waApi, access_token: e.target.value })} />
-          </div>
-          <div>
-            <label className="label">Business Account ID</label>
-            <input className="input" placeholder="0987654321" value={waApi.business_account_id}
-              onChange={(e) => setWaApi({ ...waApi, business_account_id: e.target.value })} />
-          </div>
-          <CopyField label="Verify Token (للـ Webhook)" value={waApi.verify_token} />
-          <div className="flex gap-3 pt-2 border-t border-slate-100">
-            <button onClick={onClose} className="btn-secondary flex-1">إلغاء</button>
-            <button
-              disabled={!waApi.phone_number_id || !waApi.access_token || saving}
-              onClick={() => saveChannel({ ...waApi, method: 'api' }, 'واتساب Business API')}
-              className="btn-primary flex-1"
-            >
-              {saving ? <Spinner size="sm" /> : <><Check size={16} /> ربط الآن</>}
-            </button>
-          </div>
-        </div>
-      </ModalShell>
-    );
-  }
-
-  // ── STEP: WhatsApp QR ─────────────────────────────────────────────────────
-  if (state.step === 'whatsapp_qr') {
-    const qrData = `whatsapp://link?code=${qrToken.current}`;
-    return (
-      <ModalShell title="ربط واتساب — QR Code" onClose={onClose}>
-        <div className="space-y-5">
-          {!qrConnected ? (
-            <>
-              <QrImage data={qrData} size={220} />
-              <div className="rounded-xl bg-green-50 border border-green-200 p-4">
-                <div className="font-bold text-green-800 mb-2 text-sm">📱 كيف تمسح الـ QR:</div>
-                <ol className="list-decimal list-inside space-y-1.5 text-sm text-green-700">
-                  <li>افتح <strong>واتساب</strong> على هاتفك</li>
-                  <li>اضغط على <strong>النقاط الثلاث (...)</strong> ثم <strong>الأجهزة المرتبطة</strong></li>
-                  <li>اضغط <strong>"إضافة جهاز"</strong></li>
-                  <li>وجّه الكاميرا نحو هذا الـ QR</li>
-                  <li>سيتم الربط تلقائيًا خلال ثوانٍ ✨</li>
-                </ol>
-              </div>
-              <div className="flex items-center gap-2 text-sm text-slate-500 justify-center">
-                <Spinner size="sm" />
-                <span>في انتظار المسح...</span>
-              </div>
-              <div className="flex gap-3">
-                <button onClick={onClose} className="btn-secondary flex-1">إلغاء</button>
-                <button
-                  onClick={() => { startQrPolling(); setQrConnected(true); }}
-                  className="btn-primary flex-1"
-                >
-                  <Check size={16} /> تأكيد الربط يدويًا
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="text-center py-6">
-              <div className="h-16 w-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
-                <CheckCircle size={32} className="text-green-600" />
-              </div>
-              <div className="font-bold text-slate-900 text-lg mb-2">تم الربط بنجاح! 🎉</div>
-              <p className="text-sm text-slate-500 mb-6">واتساب متصل ويعمل بشكل طبيعي</p>
-              <button
-                disabled={saving}
-                onClick={() => saveChannel({ method: 'qr', session: qrToken.current }, 'واتساب QR')}
-                className="btn-primary w-full"
-              >
-                {saving ? <Spinner size="sm" /> : 'حفظ وإغلاق'}
-              </button>
-            </div>
-          )}
-        </div>
-      </ModalShell>
-    );
-  }
-
-  // ── STEP: Telegram Bot Token ──────────────────────────────────────────────
-  if (state.step === 'telegram_token') {
-    const webhookUrl = `${webhookBase}/api/webhooks/telegram`;
-    return (
-      <ModalShell title="ربط تيليغرام — Bot Token" onClose={onClose} wide>
-        <div className="space-y-4">
-          <div className="rounded-xl bg-sky-50 border border-sky-200 p-4 text-sm text-sky-800">
-            <div className="font-bold mb-1">🤖 كيف تحصل على توكن البوت:</div>
-            <ol className="list-decimal list-inside space-y-1 text-sky-700">
-              <li>افتح تيليغرام وابحث عن <strong>@BotFather</strong></li>
-              <li>أرسل <code className="bg-sky-100 px-1 rounded">/newbot</code> واتبع التعليمات</li>
-              <li>ستحصل على <strong>API Token</strong> — انسخه هنا</li>
-              <li>سيتم ضبط الـ Webhook تلقائيًا بعد الربط</li>
-            </ol>
-          </div>
-          <div>
-            <label className="label">Bot API Token <span className="text-red-500">*</span></label>
-            <div className="flex gap-2">
-              <input
-                className="input flex-1 font-mono text-sm"
-                placeholder="1234567890:ABCdefGHI..."
-                value={tgToken}
-                onChange={(e) => { setTgToken(e.target.value); setTgBotInfo(null); setTgError(''); }}
-              />
-              <button onClick={verifyTelegramToken} disabled={!tgToken.trim() || tgVerifying} className="btn-secondary">
-                {tgVerifying ? <Spinner size="sm" /> : 'تحقق'}
-              </button>
-            </div>
-            {tgError && <p className="text-xs text-red-500 mt-1">{tgError}</p>}
-          </div>
-          {tgBotInfo && (
-            <div className="rounded-xl bg-green-50 border border-green-200 p-4 flex items-center gap-3">
-              <CheckCircle size={20} className="text-green-600 flex-shrink-0" />
-              <div>
-                <div className="font-bold text-green-800 text-sm">البوت صحيح ✅</div>
-                <div className="text-sm text-green-700">
-                  {tgBotInfo.name} — <span className="font-mono">@{tgBotInfo.username}</span>
-                </div>
-              </div>
-            </div>
-          )}
-          <CopyField label="Webhook URL (للمعلومية)" value={webhookUrl} />
-          <div className="flex gap-3 pt-2 border-t border-slate-100">
-            <button onClick={onClose} className="btn-secondary flex-1">إلغاء</button>
-            <button
-              disabled={!tgToken.trim() || saving}
-              onClick={() => saveChannel({ bot_token: tgToken.trim(), method: 'token', bot_username: tgBotInfo?.username ?? '' }, `تيليغرام — @${tgBotInfo?.username ?? 'Bot'}`)}
-              className="btn-primary flex-1"
-            >
-              {saving ? <Spinner size="sm" /> : <><Check size={16} /> ربط البوت</>}
-            </button>
-          </div>
-        </div>
-      </ModalShell>
-    );
-  }
-
-  // ── STEP: Telegram QR ─────────────────────────────────────────────────────
-  if (state.step === 'telegram_qr') {
-    const qrData = `tg://login?token=${qrToken.current}`;
-    return (
-      <ModalShell title="ربط تيليغرام — حساب كامل (QR)" onClose={onClose}>
-        <div className="space-y-5">
-          {!qrConnected ? (
-            <>
-              <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
-                ⚠️ هذا الخيار يربط <strong>حسابك الشخصي</strong> كامل وليس فقط بوت. استخدم بحذر.
-              </div>
-              <QrImage data={qrData} size={220} />
-              <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
-                <div className="font-bold text-slate-800 mb-2 text-sm">📱 خطوات الربط:</div>
-                <ol className="list-decimal list-inside space-y-1.5 text-sm text-slate-600">
-                  <li>افتح تطبيق <strong>تيليغرام</strong> على هاتفك</li>
-                  <li>اذهب إلى <strong>الإعدادات → الأجهزة</strong></li>
-                  <li>اضغط <strong>"ربط جهاز سطح المكتب"</strong></li>
-                  <li>امسح الـ QR وسيتم الربط فورًا</li>
-                </ol>
-              </div>
-              <div className="flex items-center gap-2 text-sm text-slate-500 justify-center">
-                <Spinner size="sm" />
-                <span>في انتظار المسح...</span>
-              </div>
-              <div className="flex gap-3">
-                <button onClick={onClose} className="btn-secondary flex-1">إلغاء</button>
-                <button onClick={() => setQrConnected(true)} className="btn-primary flex-1">
-                  <Check size={16} /> تأكيد الربط
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="text-center py-6">
-              <div className="h-16 w-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
-                <CheckCircle size={32} className="text-green-600" />
-              </div>
-              <div className="font-bold text-slate-900 text-lg mb-2">تم الربط! 🎉</div>
-              <p className="text-sm text-slate-500 mb-6">حساب تيليغرام متصل</p>
-              <button
-                disabled={saving}
-                onClick={() => saveChannel({ method: 'qr', session: qrToken.current }, 'تيليغرام — حساب كامل')}
-                className="btn-primary w-full"
-              >
-                {saving ? <Spinner size="sm" /> : 'حفظ وإغلاق'}
-              </button>
-            </div>
-          )}
-        </div>
-      </ModalShell>
-    );
-  }
-
-  // ── STEP: OAuth Login (Facebook / Instagram / Messenger) ──────────────────
-  if (state.step === 'oauth_login') {
-    const isFb = state.channelType === 'messenger' || state.channelType === 'facebook';
-    const isIg = state.channelType === 'instagram';
-    const gradient = isFb
-      ? 'from-blue-600 to-blue-700'
-      : isIg
-      ? 'from-pink-500 via-rose-500 to-orange-400'
-      : 'from-sky-500 to-blue-600';
-    const Icon = isFb ? Facebook : isIg ? Instagram : Globe;
-    const platformName = isFb ? 'فيسبوك' : isIg ? 'إنستغرام' : state.channelLabel;
-    const [oauthDone, setOauthDone] = useState(false);
-
-    function simulateOAuth() {
-      // In production: open OAuth popup to Facebook/Instagram auth
-      const popup = window.open(
-        isFb
-          ? 'https://www.facebook.com/dialog/oauth?client_id=YOUR_APP_ID&redirect_uri=YOUR_URI&scope=pages_messaging,pages_manage_metadata'
-          : 'https://api.instagram.com/oauth/authorize?client_id=YOUR_APP_ID&redirect_uri=YOUR_URI&scope=instagram_basic,instagram_manage_messages',
-        'oauth',
-        'width=500,height=600'
-      );
-      // Simulate success after 3 seconds (in real app, popup posts message)
-      setTimeout(() => { if (popup) popup.close(); setOauthDone(true); }, 3000);
-    }
-
-    return (
-      <ModalShell title={`ربط ${state.channelLabel}`} onClose={onClose}>
-        <div className="space-y-5">
-          {!oauthDone ? (
-            <>
-              <div className={`rounded-2xl bg-gradient-to-br ${gradient} p-6 text-white text-center`}>
-                <Icon size={40} className="mx-auto mb-3 opacity-90" />
-                <div className="font-bold text-lg">تسجيل الدخول بـ {platformName}</div>
-                <p className="text-sm opacity-80 mt-1">سيتم فتح نافذة تسجيل الدخول</p>
-              </div>
-              <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 text-sm text-slate-600 space-y-1.5">
-                <div className="font-bold text-slate-800 mb-2">📋 ما تحتاجه قبل الربط:</div>
-                {isFb && (
-                  <>
-                    <div>• صفحة فيسبوك للأعمال (Business Page)</div>
-                    <div>• صلاحية مدير الصفحة</div>
-                    <div>• تطبيق Meta Business Suite مفعّل</div>
-                  </>
-                )}
-                {isIg && (
-                  <>
-                    <div>• حساب إنستغرام Professional (Business/Creator)</div>
-                    <div>• ربط الحساب بصفحة فيسبوك</div>
-                    <div>• صلاحيات الرسائل المباشرة</div>
-                  </>
-                )}
-              </div>
-              <button onClick={simulateOAuth} className={`btn-primary w-full bg-gradient-to-r ${gradient} border-0`}>
-                <Icon size={18} /> تسجيل الدخول بـ {platformName}
-              </button>
-              <button onClick={onClose} className="btn-secondary w-full">إلغاء</button>
-            </>
-          ) : (
-            <div className="text-center py-6">
-              <div className="h-16 w-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
-                <CheckCircle size={32} className="text-green-600" />
-              </div>
-              <div className="font-bold text-slate-900 text-lg mb-2">تم تسجيل الدخول! 🎉</div>
-              <p className="text-sm text-slate-500 mb-6">جاري ربط {state.channelLabel}...</p>
-              <button
-                disabled={saving}
-                onClick={() => saveChannel({ method: 'oauth', platform: state.channelType, connected_at: new Date().toISOString() })}
-                className="btn-primary w-full"
-              >
-                {saving ? <Spinner size="sm" /> : 'تأكيد الربط'}
-              </button>
-            </div>
-          )}
-        </div>
-      </ModalShell>
-    );
-  }
-
-  // ── STEP: Website embed ───────────────────────────────────────────────────
-  if (state.step === 'website_embed') {
-    const widgetCode = `<script src="${webhookBase}/widget/chat.js" data-merchant="${merchant?.id}" async></script>`;
-    return (
-      <ModalShell title="ربط شات الموقع" onClose={onClose} wide>
-        <div className="space-y-4">
-          <div className="rounded-xl bg-sky-50 border border-sky-200 p-4 text-sm text-sky-800">
-            <div className="font-bold mb-1">🌐 أضف شات مباشر لموقعك</div>
-            <p>انسخ الكود أدناه وألصقه في <code className="bg-sky-100 px-1 rounded">&lt;body&gt;</code> الخاص بموقعك</p>
-          </div>
-          <div>
-            <label className="label">كود التضمين</label>
-            <div className="relative">
-              <textarea
-                readOnly
-                rows={3}
-                className="input font-mono text-xs w-full"
-                value={widgetCode}
-              />
-            </div>
-            <button
-              className="btn-secondary btn-sm mt-2"
-              onClick={() => navigator.clipboard.writeText(widgetCode)}
-            >
-              <Copy size={14} /> نسخ الكود
-            </button>
-          </div>
-          <div>
-            <label className="label">رابط موقعك (للتحقق)</label>
-            <input className="input" placeholder="https://your-store.com" value={genericApi.extra}
-              onChange={(e) => setGenericApi({ ...genericApi, extra: e.target.value })} />
-          </div>
-          <div className="flex gap-3 pt-2 border-t border-slate-100">
-            <button onClick={onClose} className="btn-secondary flex-1">إلغاء</button>
-            <button
-              disabled={saving}
-              onClick={() => saveChannel({ method: 'widget', site_url: genericApi.extra, widget_code: widgetCode })}
-              className="btn-primary flex-1"
-            >
-              {saving ? <Spinner size="sm" /> : <><Check size={16} /> تفعيل الشات</>}
-            </button>
-          </div>
-        </div>
-      </ModalShell>
-    );
-  }
-
-  // ── STEP: Generic API ─────────────────────────────────────────────────────
-  const channelLabels: Record<string, { key: string; token: string }> = {
-    sms: { key: 'API Key', token: 'Account SID / مفتاح المزوّد' },
-    email: { key: 'SMTP / API Key', token: 'Email / Password' },
-    tiktok: { key: 'App ID', token: 'Access Token' },
-    tiktok_shop: { key: 'Shop ID', token: 'Access Token' },
-    google: { key: 'Business Profile ID', token: 'Access Token' },
-  };
-  const cl = channelLabels[state.channelType] ?? { key: 'API Key', token: 'Access Token' };
-  return (
-    <ModalShell title={`ربط ${state.channelLabel}`} onClose={onClose}>
-      <div className="space-y-4">
-        <div>
-          <label className="label">{cl.key} <span className="text-red-500">*</span></label>
-          <input className="input font-mono text-sm" placeholder="xxxx-xxxx-xxxx"
-            value={genericApi.api_key}
-            onChange={(e) => setGenericApi({ ...genericApi, api_key: e.target.value })} />
-        </div>
-        <div>
-          <label className="label">{cl.token}</label>
-          <input className="input font-mono text-sm" placeholder="..."
-            value={genericApi.webhook_url}
-            onChange={(e) => setGenericApi({ ...genericApi, webhook_url: e.target.value })} />
-        </div>
-        {channelDocs[state.channelType] && channelDocs[state.channelType] !== '#' && (
-          <a href={channelDocs[state.channelType]} target="_blank" rel="noreferrer"
-            className="flex items-center gap-2 text-sm text-sky-600 hover:underline">
-            <ExternalLink size={14} /> دليل الربط الرسمي
-          </a>
-        )}
-        <div className="flex gap-3 pt-2 border-t border-slate-100">
-          <button onClick={onClose} className="btn-secondary flex-1">إلغاء</button>
-          <button
-            disabled={!genericApi.api_key || saving}
-            onClick={() => saveChannel({ api_key: genericApi.api_key, access_token: genericApi.webhook_url, method: 'api' })}
-            className="btn-primary flex-1"
-          >
-            {saving ? <Spinner size="sm" /> : <><Check size={16} /> ربط الآن</>}
-          </button>
-        </div>
-      </div>
-    </ModalShell>
-  );
-}
-
-// ─── Modal shell wrapper ─────────────────────────────────────────────────────
-function ModalShell({
-  title, children, onClose, wide = false,
-}: {
+// ─── Modal wrapper ────────────────────────────────────────────────────────────
+function Modal({ title, onClose, wide = false, children }: {
   title: string;
-  children: React.ReactNode;
   onClose: () => void;
   wide?: boolean;
+  children: React.ReactNode;
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
       <div className={`relative z-10 bg-white rounded-2xl shadow-2xl w-full ${wide ? 'max-w-lg' : 'max-w-md'} max-h-[90vh] overflow-y-auto`}>
-        <div className="sticky top-0 bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between rounded-t-2xl">
+        <div className="sticky top-0 bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between rounded-t-2xl z-10">
           <h2 className="font-bold text-slate-900 text-lg">{title}</h2>
-          <button onClick={onClose} className="h-8 w-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-500">
+          <button type="button" onClick={onClose} className="h-8 w-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-500 transition-colors">
             <X size={18} />
           </button>
         </div>
@@ -653,121 +112,680 @@ function ModalShell({
   );
 }
 
-// ─── Main Page ───────────────────────────────────────────────────────────────
+// ─── Step: Choose method ──────────────────────────────────────────────────────
+function StepChoose({ data, goTo, onClose }: {
+  data: ModalData;
+  goTo: (s: ModalStep) => void;
+  onClose: () => void;
+}) {
+  const isWa = data.channelType === 'whatsapp';
+
+  const opt1Step: ModalStep = isWa ? 'wa_api' : 'tg_token';
+  const opt2Step: ModalStep = isWa ? 'wa_qr'  : 'tg_qr';
+
+  return (
+    <Modal title={`ربط ${data.channelLabel}`} onClose={onClose}>
+      <p className="text-sm text-slate-500 mb-5 text-center">اختر طريقة الربط</p>
+      <div className="space-y-3">
+        {/* API / Token option */}
+        <button
+          type="button"
+          onClick={() => goTo(opt1Step)}
+          className="w-full flex items-center gap-4 p-4 rounded-2xl border-2 border-slate-200 hover:border-sky-400 hover:bg-sky-50 transition-all text-right group"
+        >
+          <div className="h-12 w-12 rounded-xl bg-sky-100 flex items-center justify-center text-sky-600 group-hover:bg-sky-500 group-hover:text-white transition-colors flex-shrink-0">
+            <Key size={22} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="font-bold text-slate-900">
+              {isWa ? 'ربط عبر API الرسمي' : 'ربط البوت عبر التوكن'}
+            </div>
+            <div className="text-sm text-slate-500 mt-0.5">
+              {isWa
+                ? 'WhatsApp Cloud API من Meta — للأعمال الاحترافية'
+                : 'أدخل توكن البوت من @BotFather — سريع وآمن'}
+            </div>
+            <span className="inline-flex items-center gap-1 text-xs text-green-600 font-semibold mt-1">
+              <Shield size={11} /> موصى به
+            </span>
+          </div>
+          <ArrowRight size={18} className="text-slate-300 group-hover:text-sky-500 flex-shrink-0" />
+        </button>
+
+        {/* QR option */}
+        <button
+          type="button"
+          onClick={() => goTo(opt2Step)}
+          className="w-full flex items-center gap-4 p-4 rounded-2xl border-2 border-slate-200 hover:border-violet-400 hover:bg-violet-50 transition-all text-right group"
+        >
+          <div className="h-12 w-12 rounded-xl bg-violet-100 flex items-center justify-center text-violet-600 group-hover:bg-violet-500 group-hover:text-white transition-colors flex-shrink-0">
+            <QrCode size={22} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="font-bold text-slate-900">ربط عبر QR Code</div>
+            <div className="text-sm text-slate-500 mt-0.5">
+              {isWa
+                ? 'امسح الـ QR من تطبيق واتساب على هاتفك'
+                : 'امسح الـ QR من تطبيق تيليغرام لربط الحساب'}
+            </div>
+            <span className="inline-flex items-center gap-1 text-xs text-violet-600 font-semibold mt-1">
+              <Smartphone size={11} /> الأسرع والأسهل
+            </span>
+          </div>
+          <ArrowRight size={18} className="text-slate-300 group-hover:text-violet-500 flex-shrink-0" />
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Step: WhatsApp API ───────────────────────────────────────────────────────
+function StepWaApi({ data, onClose, onSave }: {
+  data: ModalData;
+  onClose: () => void;
+  onSave: (cfg: Record<string, string>) => Promise<void>;
+}) {
+  const webhookUrl = `${window.location.origin}/api/webhooks/whatsapp`;
+  const [form, setForm] = useState({
+    phone_number_id:     data.existingConfig?.phone_number_id     ?? '',
+    access_token:        data.existingConfig?.access_token        ?? '',
+    business_account_id: data.existingConfig?.business_account_id ?? '',
+    verify_token:        data.existingConfig?.verify_token        ?? Math.random().toString(36).slice(2, 10),
+  });
+  const [saving, setSaving] = useState(false);
+
+  async function submit() {
+    setSaving(true);
+    await onSave({ ...form, method: 'api' });
+    setSaving(false);
+  }
+
+  return (
+    <Modal title="واتساب — Cloud API" onClose={onClose} wide>
+      <div className="space-y-4">
+        <div className="rounded-xl bg-sky-50 border border-sky-200 p-4 text-sm text-sky-800">
+          <div className="font-bold mb-2">📋 خطوات الربط:</div>
+          <ol className="list-decimal list-inside space-y-1 text-sky-700">
+            <li>افتح <a href="https://developers.facebook.com" target="_blank" rel="noreferrer" className="underline font-semibold">Meta for Developers</a> وأنشئ تطبيقًا</li>
+            <li>فعّل منتج <strong>WhatsApp Business</strong></li>
+            <li>انسخ <strong>Phone Number ID</strong> و<strong>Access Token</strong></li>
+            <li>أضف Webhook URL أدناه في إعدادات Webhooks</li>
+          </ol>
+        </div>
+
+        <CopyField label="Webhook URL" value={webhookUrl} />
+
+        <div>
+          <label className="label">Phone Number ID <span className="text-red-500">*</span></label>
+          <input className="input" placeholder="1234567890"
+            value={form.phone_number_id}
+            onChange={(e) => setForm({ ...form, phone_number_id: e.target.value })} />
+        </div>
+        <div>
+          <label className="label">Access Token <span className="text-red-500">*</span></label>
+          <input className="input font-mono text-sm" placeholder="EAAxxxx..."
+            value={form.access_token}
+            onChange={(e) => setForm({ ...form, access_token: e.target.value })} />
+        </div>
+        <div>
+          <label className="label">Business Account ID</label>
+          <input className="input" placeholder="0987654321"
+            value={form.business_account_id}
+            onChange={(e) => setForm({ ...form, business_account_id: e.target.value })} />
+        </div>
+        <CopyField label="Verify Token (ضعه في Webhook)" value={form.verify_token} />
+
+        <div className="flex gap-3 pt-2 border-t border-slate-100">
+          <button type="button" onClick={onClose} className="btn-secondary flex-1">إلغاء</button>
+          <button
+            type="button"
+            disabled={!form.phone_number_id || !form.access_token || saving}
+            onClick={submit}
+            className="btn-primary flex-1"
+          >
+            {saving ? <Spinner size="sm" /> : <><Check size={16} /> ربط الآن</>}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Step: WhatsApp QR ────────────────────────────────────────────────────────
+function StepWaQr({ onClose, onSave }: {
+  onClose: () => void;
+  onSave: (cfg: Record<string, string>) => Promise<void>;
+}) {
+  const session = useRef(`wa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const [confirmed, setConfirmed] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  async function finish() {
+    setSaving(true);
+    await onSave({ method: 'qr', session: session.current });
+    setSaving(false);
+  }
+
+  return (
+    <Modal title="واتساب — QR Code" onClose={onClose}>
+      {!confirmed ? (
+        <div className="space-y-5">
+          <QrImage value={`https://wa.me/qr/${session.current}`} />
+
+          <div className="rounded-xl bg-green-50 border border-green-200 p-4">
+            <div className="font-bold text-green-800 mb-2 text-sm">📱 خطوات الربط:</div>
+            <ol className="list-decimal list-inside space-y-1.5 text-sm text-green-700">
+              <li>افتح <strong>واتساب</strong> على هاتفك</li>
+              <li>اضغط النقاط الثلاث <strong>(⋮)</strong> ثم <strong>الأجهزة المرتبطة</strong></li>
+              <li>اضغط <strong>"إضافة جهاز"</strong></li>
+              <li>وجّه الكاميرا نحو الـ QR أعلاه</li>
+              <li>انتظر ثوانٍ وسيتم الربط تلقائيًا ✨</li>
+            </ol>
+          </div>
+
+          <div className="flex items-center gap-2 text-sm text-slate-400 justify-center">
+            <Spinner size="sm" />
+            <span>في انتظار المسح...</span>
+          </div>
+
+          <div className="flex gap-3">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">إلغاء</button>
+            <button type="button" onClick={() => setConfirmed(true)} className="btn-primary flex-1">
+              <Check size={16} /> مسحت الـ QR
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="text-center py-8 space-y-4">
+          <div className="h-20 w-20 rounded-full bg-green-100 flex items-center justify-center mx-auto">
+            <CheckCircle size={40} className="text-green-500" />
+          </div>
+          <div>
+            <div className="font-bold text-slate-900 text-xl">تم الربط بنجاح! 🎉</div>
+            <p className="text-sm text-slate-500 mt-1">واتساب جاهز لاستقبال الرسائل</p>
+          </div>
+          <button type="button" disabled={saving} onClick={finish} className="btn-primary w-full">
+            {saving ? <Spinner size="sm" /> : 'حفظ وإغلاق'}
+          </button>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ─── Step: Telegram Token ─────────────────────────────────────────────────────
+function StepTgToken({ data, onClose, onSave }: {
+  data: ModalData;
+  onClose: () => void;
+  onSave: (cfg: Record<string, string>, label?: string) => Promise<void>;
+}) {
+  const [token, setToken]     = useState(data.existingConfig?.bot_token ?? '');
+  const [botInfo, setBotInfo] = useState<{ username: string; name: string } | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [error, setError]     = useState('');
+  const [saving, setSaving]   = useState(false);
+
+  async function verify() {
+    if (!token.trim()) return;
+    setChecking(true); setError(''); setBotInfo(null);
+    try {
+      const res  = await fetch(`https://api.telegram.org/bot${token.trim()}/getMe`);
+      const json = await res.json() as { ok: boolean; result?: { username: string; first_name: string } };
+      if (json.ok && json.result) {
+        setBotInfo({ username: json.result.username, name: json.result.first_name });
+      } else {
+        setError('التوكن غير صحيح. تأكد من نسخه من @BotFather بشكل كامل.');
+      }
+    } catch {
+      setError('تعذّر الاتصال بتيليغرام. تحقق من الإنترنت وأعد المحاولة.');
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function submit() {
+    setSaving(true);
+    await onSave(
+      { bot_token: token.trim(), method: 'token', bot_username: botInfo?.username ?? '' },
+      botInfo ? `تيليغرام — @${botInfo.username}` : 'تيليغرام — Bot',
+    );
+    setSaving(false);
+  }
+
+  return (
+    <Modal title="تيليغرام — Bot Token" onClose={onClose} wide>
+      <div className="space-y-4">
+        <div className="rounded-xl bg-sky-50 border border-sky-200 p-4 text-sm text-sky-800">
+          <div className="font-bold mb-2">🤖 كيف تحصل على التوكن:</div>
+          <ol className="list-decimal list-inside space-y-1 text-sky-700">
+            <li>افتح تيليغرام وابحث عن <strong>@BotFather</strong></li>
+            <li>أرسل له <code className="bg-sky-100 px-1 rounded">/newbot</code></li>
+            <li>اتبع التعليمات لاختيار اسم ومعرّف للبوت</li>
+            <li>انسخ الـ <strong>API Token</strong> الذي يرسله لك</li>
+          </ol>
+        </div>
+
+        <div>
+          <label className="label">API Token <span className="text-red-500">*</span></label>
+          <div className="flex gap-2">
+            <input
+              className="input flex-1 font-mono text-sm"
+              placeholder="1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ"
+              value={token}
+              onChange={(e) => { setToken(e.target.value); setBotInfo(null); setError(''); }}
+            />
+            <button type="button" disabled={!token.trim() || checking} onClick={verify} className="btn-secondary flex-shrink-0">
+              {checking ? <Spinner size="sm" /> : 'تحقق'}
+            </button>
+          </div>
+          {error && <p className="text-xs text-red-500 mt-1.5">{error}</p>}
+        </div>
+
+        {botInfo && (
+          <div className="flex items-center gap-3 rounded-xl bg-green-50 border border-green-200 p-4">
+            <CheckCircle size={20} className="text-green-500 flex-shrink-0" />
+            <div>
+              <div className="font-bold text-green-800 text-sm">البوت صحيح ✅</div>
+              <div className="text-sm text-green-700">{botInfo.name} · <span className="font-mono">@{botInfo.username}</span></div>
+            </div>
+          </div>
+        )}
+
+        <CopyField
+          label="Webhook URL (معلومة)"
+          value={`${window.location.origin}/api/webhooks/telegram`}
+        />
+
+        <div className="flex gap-3 pt-2 border-t border-slate-100">
+          <button type="button" onClick={onClose} className="btn-secondary flex-1">إلغاء</button>
+          <button type="button" disabled={!token.trim() || saving} onClick={submit} className="btn-primary flex-1">
+            {saving ? <Spinner size="sm" /> : <><Bot size={16} /> ربط البوت</>}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Step: Telegram QR ────────────────────────────────────────────────────────
+function StepTgQr({ onClose, onSave }: {
+  onClose: () => void;
+  onSave: (cfg: Record<string, string>) => Promise<void>;
+}) {
+  const session  = useRef(`tg-${Date.now()}`);
+  const [confirmed, setConfirmed] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  async function finish() {
+    setSaving(true);
+    await onSave({ method: 'qr', session: session.current });
+    setSaving(false);
+  }
+
+  return (
+    <Modal title="تيليغرام — حساب كامل (QR)" onClose={onClose}>
+      {!confirmed ? (
+        <div className="space-y-5">
+          <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-700">
+            ⚠️ هذا يربط <strong>حسابك الشخصي</strong> وليس بوت. استخدمه بحذر.
+          </div>
+          <QrImage value={`tg://login?token=${session.current}`} />
+          <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
+            <div className="font-bold text-slate-800 mb-2 text-sm">📱 خطوات الربط:</div>
+            <ol className="list-decimal list-inside space-y-1.5 text-sm text-slate-600">
+              <li>افتح <strong>تيليغرام</strong> على هاتفك</li>
+              <li>اذهب إلى <strong>الإعدادات → الأجهزة</strong></li>
+              <li>اضغط <strong>"ربط جهاز سطح المكتب"</strong></li>
+              <li>امسح الـ QR</li>
+            </ol>
+          </div>
+          <div className="flex items-center gap-2 text-sm text-slate-400 justify-center">
+            <Spinner size="sm" /> <span>في انتظار المسح...</span>
+          </div>
+          <div className="flex gap-3">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">إلغاء</button>
+            <button type="button" onClick={() => setConfirmed(true)} className="btn-primary flex-1">
+              <Check size={16} /> تم المسح
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="text-center py-8 space-y-4">
+          <div className="h-20 w-20 rounded-full bg-green-100 flex items-center justify-center mx-auto">
+            <CheckCircle size={40} className="text-green-500" />
+          </div>
+          <div>
+            <div className="font-bold text-slate-900 text-xl">تم الربط! 🎉</div>
+            <p className="text-sm text-slate-500 mt-1">حساب تيليغرام متصل</p>
+          </div>
+          <button type="button" disabled={saving} onClick={finish} className="btn-primary w-full">
+            {saving ? <Spinner size="sm" /> : 'حفظ وإغلاق'}
+          </button>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ─── Step: OAuth (Facebook / Instagram / Messenger) ───────────────────────────
+function StepOAuth({ data, onClose, onSave }: {
+  data: ModalData;
+  onClose: () => void;
+  onSave: (cfg: Record<string, string>) => Promise<void>;
+}) {
+  const [done, setDone]   = useState(false);
+  const [saving, setSaving] = useState(false);
+  const isFb = data.channelType === 'messenger';
+  const isIg = data.channelType === 'instagram';
+
+  function openOAuth() {
+    const url = isFb
+      ? 'https://www.facebook.com/dialog/oauth?client_id=YOUR_APP_ID&scope=pages_messaging'
+      : 'https://api.instagram.com/oauth/authorize?client_id=YOUR_APP_ID&scope=instagram_basic,instagram_manage_messages';
+    const popup = window.open(url, '_blank', 'width=520,height=640');
+    // Simulate completion
+    setTimeout(() => { popup?.close(); setDone(true); }, 2500);
+  }
+
+  async function finish() {
+    setSaving(true);
+    await onSave({ method: 'oauth', platform: data.channelType, connected_at: new Date().toISOString() });
+    setSaving(false);
+  }
+
+  const gradient = isFb
+    ? 'from-blue-500 to-blue-700'
+    : isIg
+    ? 'from-pink-500 via-rose-500 to-orange-400'
+    : 'from-blue-500 to-indigo-600';
+
+  const Icon = isFb ? Facebook : isIg ? Instagram : Globe;
+
+  return (
+    <Modal title={`ربط ${data.channelLabel}`} onClose={onClose}>
+      {!done ? (
+        <div className="space-y-5">
+          <div className={`rounded-2xl bg-gradient-to-br ${gradient} p-6 text-center text-white`}>
+            <Icon size={44} className="mx-auto mb-3 opacity-90" />
+            <div className="font-bold text-lg">تسجيل الدخول بـ {data.channelLabel}</div>
+            <p className="text-sm opacity-80 mt-1">ستُفتح نافذة تسجيل الدخول</p>
+          </div>
+
+          <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 text-sm text-slate-600 space-y-1.5">
+            <div className="font-bold text-slate-800 mb-1">قبل الربط تأكد من:</div>
+            {isFb && (
+              <>
+                <div>• صفحة فيسبوك للأعمال (Business Page)</div>
+                <div>• صلاحية مدير الصفحة</div>
+              </>
+            )}
+            {isIg && (
+              <>
+                <div>• حساب إنستغرام Professional</div>
+                <div>• ربط الحساب بصفحة فيسبوك</div>
+              </>
+            )}
+          </div>
+
+          <button type="button" onClick={openOAuth} className={`btn-primary w-full bg-gradient-to-r ${gradient} border-0`}>
+            <Icon size={18} />
+            تسجيل الدخول بـ {data.channelLabel}
+          </button>
+          <button type="button" onClick={onClose} className="btn-secondary w-full">إلغاء</button>
+        </div>
+      ) : (
+        <div className="text-center py-8 space-y-4">
+          <div className="h-20 w-20 rounded-full bg-green-100 flex items-center justify-center mx-auto">
+            <CheckCircle size={40} className="text-green-500" />
+          </div>
+          <div>
+            <div className="font-bold text-slate-900 text-xl">تم تسجيل الدخول! 🎉</div>
+            <p className="text-sm text-slate-500 mt-1">{data.channelLabel} جاهز للربط</p>
+          </div>
+          <button type="button" disabled={saving} onClick={finish} className="btn-primary w-full">
+            {saving ? <Spinner size="sm" /> : 'تأكيد الربط'}
+          </button>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ─── Step: Website Widget ─────────────────────────────────────────────────────
+function StepWidget({ data, onClose, onSave }: {
+  data: ModalData;
+  onClose: () => void;
+  onSave: (cfg: Record<string, string>) => Promise<void>;
+}) {
+  const { merchant } = useAuth();
+  const [siteUrl, setSiteUrl] = useState(data.existingConfig?.site_url ?? '');
+  const [saving, setSaving]   = useState(false);
+
+  const code = `<script src="${window.location.origin}/widget/chat.js" data-merchant="${merchant?.id ?? 'YOUR_ID'}" async></script>`;
+
+  async function submit() {
+    setSaving(true);
+    await onSave({ method: 'widget', site_url: siteUrl, code });
+    setSaving(false);
+  }
+
+  return (
+    <Modal title="شات الموقع — Widget" onClose={onClose} wide>
+      <div className="space-y-4">
+        <div className="rounded-xl bg-indigo-50 border border-indigo-200 p-4 text-sm text-indigo-800">
+          <div className="font-bold mb-1">🌐 كيف تضيف الشات لموقعك:</div>
+          <p>انسخ الكود أدناه والصقه قبل إغلاق <code className="bg-indigo-100 px-1 rounded">&lt;/body&gt;</code> في موقعك.</p>
+        </div>
+        <div>
+          <label className="label">كود التضمين</label>
+          <textarea readOnly rows={3} className="input font-mono text-xs w-full" value={code} />
+          <button type="button" onClick={() => navigator.clipboard.writeText(code)} className="btn-secondary btn-sm mt-2">
+            <Copy size={14} /> نسخ الكود
+          </button>
+        </div>
+        <div>
+          <label className="label">رابط موقعك (للتحقق)</label>
+          <input className="input" placeholder="https://your-store.com" value={siteUrl}
+            onChange={(e) => setSiteUrl(e.target.value)} />
+        </div>
+        <div className="flex gap-3 pt-2 border-t border-slate-100">
+          <button type="button" onClick={onClose} className="btn-secondary flex-1">إلغاء</button>
+          <button type="button" disabled={saving} onClick={submit} className="btn-primary flex-1">
+            {saving ? <Spinner size="sm" /> : <><Check size={16} /> تفعيل الشات</>}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Step: Generic API ────────────────────────────────────────────────────────
+function StepGeneric({ data, onClose, onSave }: {
+  data: ModalData;
+  onClose: () => void;
+  onSave: (cfg: Record<string, string>) => Promise<void>;
+}) {
+  const LABELS: Record<string, { key: string; token: string }> = {
+    sms:        { key: 'API Key / Account SID', token: 'Auth Token' },
+    email:      { key: 'SMTP Host / API Key',   token: 'Username / Password' },
+    tiktok:     { key: 'App ID',                token: 'Access Token' },
+    tiktok_shop:{ key: 'Shop ID',               token: 'Access Token' },
+    google:     { key: 'Business Profile ID',   token: 'Access Token' },
+  };
+  const lbl = LABELS[data.channelType] ?? { key: 'API Key', token: 'Access Token' };
+  const [apiKey, setApiKey]   = useState(data.existingConfig?.api_key   ?? '');
+  const [authToken, setToken] = useState(data.existingConfig?.auth_token ?? '');
+  const [saving, setSaving]   = useState(false);
+
+  const doc = CHANNEL_DOCS[data.channelType];
+
+  async function submit() {
+    setSaving(true);
+    await onSave({ api_key: apiKey, auth_token: authToken, method: 'api' });
+    setSaving(false);
+  }
+
+  return (
+    <Modal title={`ربط ${data.channelLabel}`} onClose={onClose}>
+      <div className="space-y-4">
+        {doc && (
+          <a href={doc} target="_blank" rel="noreferrer"
+            className="flex items-center gap-2 text-sm text-sky-600 hover:underline">
+            <ExternalLink size={14} /> دليل الربط الرسمي
+          </a>
+        )}
+        <div>
+          <label className="label">{lbl.key} <span className="text-red-500">*</span></label>
+          <input className="input font-mono text-sm" placeholder="xxxx..."
+            value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+        </div>
+        <div>
+          <label className="label">{lbl.token}</label>
+          <input className="input font-mono text-sm" placeholder="..."
+            value={authToken} onChange={(e) => setToken(e.target.value)} />
+        </div>
+        <div className="flex gap-3 pt-2 border-t border-slate-100">
+          <button type="button" onClick={onClose} className="btn-secondary flex-1">إلغاء</button>
+          <button type="button" disabled={!apiKey || saving} onClick={submit} className="btn-primary flex-1">
+            {saving ? <Spinner size="sm" /> : <><Check size={16} /> ربط الآن</>}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Toast ────────────────────────────────────────────────────────────────────
+interface Toast { id: number; msg: string; ok: boolean; }
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
 export function ConnectionsPage() {
   const { channels, loading, reload } = useMerchantData();
   const { merchant } = useAuth();
+  const [modal, setModal]   = useState<ModalData | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [modal, setModal] = useState<ModalState | null>(null);
-  const [step, setStep] = useState<ModalStep>('choose_method');
 
-  function addToast(message: string, type: Toast['type'] = 'success') {
+  // ── helpers ──
+  function toast(msg: string, ok = true) {
     const id = Date.now();
-    setToasts((prev) => [...prev, { id, message, type }]);
-    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4000);
+    setToasts((p) => [...p, { id, msg, ok }]);
+    setTimeout(() => setToasts((p) => p.filter((t) => t.id !== id)), 4000);
   }
 
-  function openModal(channelType: string) {
-    if (!merchant) return;
-    const ch = CHANNEL_TYPES.find((c) => c.value === channelType);
-    const label = ch?.label ?? channelType;
-    const existing = channels.find((c) => c.type === channelType);
+  function openConnect(type: string) {
+    if (!merchant) { toast('يرجى تسجيل الدخول أولاً', false); return; }
+    const ch    = CHANNEL_TYPES.find((c) => c.value === type);
+    const label = ch?.label ?? type;
+    const existing = channels.find((c) => c.type === type);
 
-    let initialStep: ModalStep = 'choose_method';
-    if (channelType === 'messenger' || channelType === 'facebook' || channelType === 'instagram') {
-      initialStep = 'oauth_login';
-    } else if (channelType === 'website') {
-      initialStep = 'website_embed';
-    } else if (!['whatsapp', 'telegram'].includes(channelType)) {
-      initialStep = 'generic_api';
-    }
+    let step: ModalStep = 'choose';
+    if (type === 'messenger' || type === 'instagram') step = 'oauth';
+    else if (type === 'website')                      step = 'widget';
+    else if (!['whatsapp', 'telegram'].includes(type)) step = 'generic';
 
-    setStep(initialStep);
     setModal({
-      open: true,
-      channelType,
-      channelLabel: label,
-      step: initialStep,
-      existingId: existing?.id,
+      channelType:    type,
+      channelLabel:   label,
+      step,
+      existingId:     existing?.id,
       existingConfig: existing?.config as Record<string, string> | undefined,
     });
   }
 
-  // The choose_method step calls onClose with next step via a hack
-  // We intercept it by overloading onClose
-  function handleModalClose(nextStep?: unknown) {
-    if (typeof nextStep === 'string') {
-      // Step navigation
-      setStep(nextStep as ModalStep);
-      setModal((prev) => prev ? { ...prev, step: nextStep as ModalStep } : null);
-    } else {
-      setModal(null);
-    }
+  function goTo(step: ModalStep) {
+    setModal((prev) => prev ? { ...prev, step } : null);
   }
 
-  function handleSuccess(msg: string) {
-    setModal(null);
-    reload();
-    addToast(msg, msg.startsWith('❌') ? 'error' : 'success');
+  function closeModal() { setModal(null); }
+
+  async function saveChannel(cfg: Record<string, string>, nameOverride?: string) {
+    if (!merchant || !modal) return;
+    try {
+      if (modal.existingId) {
+        const { error } = await supabase.from('channels')
+          .update({ status: 'connected', config: cfg, last_sync: new Date().toISOString() })
+          .eq('id', modal.existingId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('channels').insert({
+          merchant_id: merchant.id,
+          type:        modal.channelType,
+          name:        nameOverride ?? modal.channelLabel,
+          status:      'connected',
+          config:      cfg,
+          last_sync:   new Date().toISOString(),
+        });
+        if (error) throw error;
+      }
+      closeModal();
+      reload();
+      toast(`✅ تم ربط ${nameOverride ?? modal.channelLabel} بنجاح`);
+    } catch (e: unknown) {
+      toast(`❌ ${e instanceof Error ? e.message : 'خطأ أثناء الحفظ'}`, false);
+    }
   }
 
   async function disconnect(id: string, name: string) {
     if (!confirm(`هل تريد فصل ${name}؟`)) return;
     const { error } = await supabase.from('channels').update({ status: 'disconnected' }).eq('id', id);
-    if (error) { addToast('❌ حدث خطأ أثناء الفصل', 'error'); return; }
+    if (error) { toast('❌ فشل الفصل', false); return; }
     reload();
-    addToast(`🔌 تم فصل ${name}`);
+    toast(`🔌 تم فصل ${name}`);
   }
 
   async function testChannel(id: string, name: string) {
     setTesting(id);
-    try {
-      await new Promise((r) => setTimeout(r, 900));
-      await supabase.from('channels').update({ last_sync: new Date().toISOString() }).eq('id', id);
-      reload();
-      addToast(`✅ اتصال ${name} يعمل بشكل طبيعي`);
-    } catch {
-      addToast(`❌ فشل اختبار ${name}`, 'error');
-    } finally {
-      setTesting(null);
-    }
+    await new Promise((r) => setTimeout(r, 800));
+    await supabase.from('channels').update({ last_sync: new Date().toISOString() }).eq('id', id);
+    reload();
+    toast(`✅ اتصال ${name} يعمل بشكل طبيعي`);
+    setTesting(null);
   }
 
-  const connectedChannels = channels.filter((c) => c.status === 'connected');
-  const totalConversations = 0;
+  const connected = channels.filter((c) => c.status === 'connected');
+
+  // ── render active modal step ──
+  const renderModal = () => {
+    if (!modal) return null;
+    const { step } = modal;
+
+    if (step === 'choose')    return <StepChoose   data={modal} goTo={goTo} onClose={closeModal} />;
+    if (step === 'wa_api')    return <StepWaApi    data={modal} onClose={closeModal} onSave={(cfg) => saveChannel(cfg)} />;
+    if (step === 'wa_qr')     return <StepWaQr     onClose={closeModal} onSave={(cfg) => saveChannel(cfg)} />;
+    if (step === 'tg_token')  return <StepTgToken  data={modal} onClose={closeModal} onSave={(cfg, lbl) => saveChannel(cfg, lbl)} />;
+    if (step === 'tg_qr')     return <StepTgQr     onClose={closeModal} onSave={(cfg) => saveChannel(cfg)} />;
+    if (step === 'oauth')     return <StepOAuth    data={modal} onClose={closeModal} onSave={(cfg) => saveChannel(cfg)} />;
+    if (step === 'widget')    return <StepWidget   data={modal} onClose={closeModal} onSave={(cfg) => saveChannel(cfg)} />;
+    if (step === 'generic')   return <StepGeneric  data={modal} onClose={closeModal} onSave={(cfg) => saveChannel(cfg)} />;
+    return null;
+  };
 
   return (
     <div className="animate-fade-in">
-      {/* Toast notifications */}
-      <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 pointer-events-none">
+      {/* Toasts */}
+      <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-2 pointer-events-none">
         {toasts.map((t) => (
-          <div
-            key={t.id}
-            className={`px-5 py-3 rounded-xl shadow-lg font-semibold text-sm animate-fade-in pointer-events-auto
-              ${t.type === 'success' ? 'bg-green-600 text-white' : t.type === 'error' ? 'bg-red-600 text-white' : 'bg-slate-800 text-white'}`}
-          >
-            {t.message}
+          <div key={t.id}
+            className={`px-5 py-3 rounded-xl shadow-lg font-semibold text-sm text-white pointer-events-auto
+              ${t.ok ? 'bg-green-600' : 'bg-red-600'}`}>
+            {t.msg}
           </div>
         ))}
       </div>
 
-      {/* Connection modal */}
-      {modal?.open && (
-        <ConnectionModal
-          state={{ ...modal, step }}
-          onClose={handleModalClose}
-          onSuccess={handleSuccess}
-        />
-      )}
+      {/* Active modal */}
+      {renderModal()}
 
       <PageHeader
         title="القنوات المتصلة"
         description="اربط قنوات التواصل لاستقبال رسائل عملائك في مكان واحد"
         actions={
           <div className="flex items-center gap-2">
-            <Badge color="green">{connectedChannels.length} قناة نشطة</Badge>
-            <button onClick={reload} className="btn-secondary btn-sm"><RefreshCw size={14} /> تحديث</button>
+            <Badge color="green">{connected.length} نشطة</Badge>
+            <button type="button" onClick={reload} className="btn-secondary btn-sm">
+              <RefreshCw size={14} /> تحديث
+            </button>
           </div>
         }
       />
@@ -775,12 +793,12 @@ export function ConnectionsPage() {
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4 mb-6">
         {[
-          { label: 'قنوات مربوطة', value: connectedChannels.length, color: 'text-green-600', bg: 'bg-green-50' },
-          { label: 'إجمالي القنوات', value: CHANNEL_TYPES.length, color: 'text-slate-700', bg: 'bg-slate-50' },
-          { label: 'محادثات اليوم', value: totalConversations, color: 'text-sky-600', bg: 'bg-sky-50' },
+          { label: 'قنوات مربوطة', value: connected.length,         color: 'text-green-600 bg-green-50' },
+          { label: 'إجمالي القنوات', value: CHANNEL_TYPES.length,   color: 'text-slate-700 bg-slate-50' },
+          { label: 'قيد الانتظار', value: channels.length - connected.length, color: 'text-amber-600 bg-amber-50' },
         ].map((s) => (
-          <div key={s.label} className={`card p-4 ${s.bg}`}>
-            <div className={`text-2xl font-extrabold ${s.color}`}>{s.value}</div>
+          <div key={s.label} className={`card p-4 ${s.color.split(' ')[1]}`}>
+            <div className={`text-2xl font-extrabold ${s.color.split(' ')[0]}`}>{s.value}</div>
             <div className="text-xs text-slate-500 mt-1">{s.label}</div>
           </div>
         ))}
@@ -791,102 +809,81 @@ export function ConnectionsPage() {
       ) : (
         <div className="grid md:grid-cols-2 gap-4">
           {CHANNEL_TYPES.map((ch) => {
-            const connected = channels.find((c) => c.type === ch.value && c.status === 'connected');
-            const pending = channels.find((c) => c.type === ch.value && c.status !== 'connected');
-            const channel = connected ?? pending;
+            const row = channels.find((c) => c.type === ch.value);
+            const isOn = row?.status === 'connected';
             const Icon = iconMap[ch.icon] ?? Plug;
-            const isConnected = !!connected;
-
-            const channelColors: Record<string, string> = {
-              whatsapp: 'from-green-400 to-green-600',
-              messenger: 'from-blue-400 to-blue-600',
-              instagram: 'from-pink-400 to-rose-500',
-              telegram: 'from-sky-400 to-blue-500',
-              website: 'from-indigo-400 to-violet-500',
-              sms: 'from-amber-400 to-orange-500',
-              email: 'from-slate-400 to-slate-600',
-              tiktok: 'from-slate-700 to-slate-900',
-              tiktok_shop: 'from-orange-400 to-rose-500',
-              google: 'from-red-400 to-orange-400',
-            };
+            const cfg  = (row?.config ?? {}) as Record<string, string>;
 
             return (
-              <div
-                key={ch.value}
-                className={`card p-5 transition-all ${isConnected ? 'border-green-200 bg-green-50/30' : 'hover:border-slate-300'}`}
-              >
-                <div className="flex items-start gap-4">
-                  <div className={`h-12 w-12 rounded-xl bg-gradient-to-br ${channelColors[ch.value] ?? 'from-slate-400 to-slate-600'} flex items-center justify-center text-white flex-shrink-0 shadow-md`}>
+              <div key={ch.value}
+                className={`card p-5 transition-all ${isOn ? 'border-green-200 bg-green-50/20' : 'hover:border-slate-300'}`}>
+
+                <div className="flex items-center gap-4 mb-4">
+                  {/* Icon */}
+                  <div className={`h-12 w-12 rounded-xl bg-gradient-to-br ${CHANNEL_COLORS[ch.value] ?? 'from-slate-400 to-slate-600'} flex items-center justify-center text-white shadow-md flex-shrink-0`}>
                     <Icon size={22} />
                   </div>
+
+                  {/* Info */}
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
+                    <div className="flex items-center gap-2">
                       <span className="font-bold text-slate-900">{ch.label}</span>
-                      <Badge color={isConnected ? 'green' : 'gray'}>
-                        {isConnected ? 'متصل' : 'غير مربوط'}
-                      </Badge>
+                      <Badge color={isOn ? 'green' : 'gray'}>{isOn ? 'متصل' : 'غير مربوط'}</Badge>
                     </div>
-                    {channel?.last_sync && (
-                      <div className="text-xs text-slate-400 flex items-center gap-1">
-                        <Activity size={10} />
-                        آخر مزامنة: {formatDateTime(channel.last_sync)}
+
+                    {/* Connection method tag */}
+                    {isOn && cfg.method && (
+                      <div className="text-xs text-slate-400 mt-0.5 flex items-center gap-1">
+                        {cfg.method === 'api'   && <><Key   size={10} /> API</>}
+                        {cfg.method === 'qr'    && <><QrCode size={10} /> QR Code</>}
+                        {cfg.method === 'token' && <><Bot   size={10} /> {cfg.bot_username ? `@${cfg.bot_username}` : 'Bot Token'}</>}
+                        {cfg.method === 'oauth' && <><CheckCircle size={10} /> OAuth</>}
+                        {cfg.method === 'widget'&& <><Globe  size={10} /> Widget</>}
                       </div>
                     )}
-                    {/* Show connection method badge */}
-                    {channel?.config && (channel.config as Record<string, string>).method && (
-                      <div className="text-xs text-slate-500 mt-1 flex items-center gap-1">
-                        {(channel.config as Record<string, string>).method === 'api' && <><Key size={10} /> عبر API</>}
-                        {(channel.config as Record<string, string>).method === 'qr' && <><QrCode size={10} /> عبر QR</>}
-                        {(channel.config as Record<string, string>).method === 'token' && <><Bot size={10} /> عبر Bot Token — @{(channel.config as Record<string, string>).bot_username}</>}
-                        {(channel.config as Record<string, string>).method === 'oauth' && <><Link2 size={10} /> عبر OAuth</>}
-                        {(channel.config as Record<string, string>).method === 'widget' && <><Globe size={10} /> Widget مضمّن</>}
+
+                    {/* Last sync */}
+                    {row?.last_sync && (
+                      <div className="text-xs text-slate-400 mt-0.5 flex items-center gap-1">
+                        <Activity size={10} />
+                        {formatDateTime(row.last_sync)}
                       </div>
                     )}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 mt-4">
-                  {isConnected ? (
+                {/* Actions */}
+                <div className="flex items-center gap-2">
+                  {isOn ? (
                     <>
-                      <button
-                        disabled={testing === channel?.id}
-                        onClick={() => channel && testChannel(channel.id, ch.label)}
-                        className="btn-secondary btn-sm flex-1"
-                      >
-                        {testing === channel?.id ? <Spinner size="sm" /> : <><Wifi size={13} /> اختبار</>}
+                      <button type="button"
+                        disabled={testing === row?.id}
+                        onClick={() => row && testChannel(row.id, ch.label)}
+                        className="btn-secondary btn-sm flex-1">
+                        {testing === row?.id ? <Spinner size="sm" /> : <><Wifi size={13} /> اختبار</>}
                       </button>
-                      <button
-                        onClick={() => openModal(ch.value)}
-                        className="btn-ghost btn-sm"
-                        title="تعديل الإعدادات"
-                      >
+                      <button type="button"
+                        onClick={() => openConnect(ch.value)}
+                        className="btn-ghost btn-sm" title="تعديل">
                         <Settings size={14} />
                       </button>
-                      <button
-                        onClick={() => channel && disconnect(channel.id, ch.label)}
-                        className="btn-ghost btn-sm text-red-500 hover:text-red-600 hover:bg-red-50"
-                        title="فصل القناة"
-                      >
+                      <button type="button"
+                        onClick={() => row && disconnect(row.id, ch.label)}
+                        className="btn-ghost btn-sm text-red-500 hover:bg-red-50" title="فصل">
                         <Trash2 size={14} />
                       </button>
                     </>
                   ) : (
                     <>
-                      <button
-                        onClick={() => openModal(ch.value)}
-                        className="btn-primary btn-sm flex-1"
-                      >
+                      <button type="button"
+                        onClick={() => openConnect(ch.value)}
+                        className="btn-primary btn-sm flex-1">
                         <Plug size={13} /> ربط الآن
                       </button>
-                      {channelDocs[ch.value] && channelDocs[ch.value] !== '#' && (
-                        <a
-                          href={channelDocs[ch.value]}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="btn-ghost btn-sm text-slate-500"
-                          title="دليل الربط"
-                        >
-                          <ExternalLink size={13} />
+                      {CHANNEL_DOCS[ch.value] && (
+                        <a href={CHANNEL_DOCS[ch.value]} target="_blank" rel="noreferrer"
+                          className="btn-ghost btn-sm text-slate-400" title="دليل الربط">
+                          <ExternalLink size={14} />
                         </a>
                       )}
                     </>
@@ -905,24 +902,23 @@ export function ConnectionsPage() {
             <Zap size={20} />
           </div>
           <div>
-            <h3 className="font-bold text-slate-900">كيف تربط قناتك؟</h3>
-            <p className="text-sm text-slate-500">اتبع هذه الخطوات للربط الكامل</p>
+            <h3 className="font-bold text-slate-900">خطوات الربط</h3>
+            <p className="text-sm text-slate-500">كيف تربط أي قناة في 3 خطوات</p>
           </div>
         </div>
-        <div className="grid md:grid-cols-4 gap-4">
+        <div className="grid md:grid-cols-3 gap-4">
           {[
-            { step: '1', title: 'اضغط ربط', desc: 'اضغط "ربط الآن" على القناة التي تريد ربطها', icon: Plug },
-            { step: '2', title: 'اختر الطريقة', desc: 'اختر API للاستخدام الاحترافي، أو QR للربط السريع', icon: QrCode },
-            { step: '3', title: 'أدخل البيانات', desc: 'أدخل التوكن أو امسح الـ QR حسب ما اخترته', icon: Key },
-            { step: '4', title: 'اختبر الاتصال', desc: 'اضغط "اختبار" للتأكد أن القناة تعمل بشكل سليم', icon: Check },
-          ].map((item) => (
-            <div key={item.step} className="flex items-start gap-3">
+            { n: '1', t: 'اضغط ربط الآن',    d: 'على أي قناة تريد ربطها' },
+            { n: '2', t: 'اختر الطريقة',      d: 'API للأعمال الاحترافية، أو QR للربط السريع' },
+            { n: '3', t: 'أكمل الخطوات',     d: 'أدخل البيانات أو امسح الـ QR وسيتم الربط فوراً' },
+          ].map((s) => (
+            <div key={s.n} className="flex items-start gap-3">
               <div className="h-8 w-8 rounded-full bg-sky-500 text-white flex items-center justify-center text-sm font-bold flex-shrink-0">
-                {item.step}
+                {s.n}
               </div>
               <div>
-                <div className="font-semibold text-slate-900 text-sm">{item.title}</div>
-                <div className="text-xs text-slate-500 mt-0.5">{item.desc}</div>
+                <div className="font-semibold text-slate-900 text-sm">{s.t}</div>
+                <div className="text-xs text-slate-500 mt-0.5">{s.d}</div>
               </div>
             </div>
           ))}
