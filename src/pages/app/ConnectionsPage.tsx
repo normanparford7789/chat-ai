@@ -252,63 +252,39 @@ function StepWaApi({ data, onClose, onSave }: {
 }
 
 // ─── Step: WhatsApp QR ────────────────────────────────────────────────────────
-function StepWaQr({ onClose, onSave }: {
+function StepWaQr({ onClose, goToApi }: {
   onClose: () => void;
-  onSave: (cfg: Record<string, string>) => Promise<void>;
+  goToApi: () => void;
 }) {
-  const session = useRef(`wa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-  const [confirmed, setConfirmed] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  async function finish() {
-    setSaving(true);
-    await onSave({ method: 'qr', session: session.current });
-    setSaving(false);
-  }
-
   return (
     <Modal title="واتساب — QR Code" onClose={onClose}>
-      {!confirmed ? (
-        <div className="space-y-5">
-          <QrImage value={`https://wa.me/qr/${session.current}`} />
-
-          <div className="rounded-xl bg-green-50 border border-green-200 p-4">
-            <div className="font-bold text-green-800 mb-2 text-sm">📱 خطوات الربط:</div>
-            <ol className="list-decimal list-inside space-y-1.5 text-sm text-green-700">
-              <li>افتح <strong>واتساب</strong> على هاتفك</li>
-              <li>اضغط النقاط الثلاث <strong>(⋮)</strong> ثم <strong>الأجهزة المرتبطة</strong></li>
-              <li>اضغط <strong>"إضافة جهاز"</strong></li>
-              <li>وجّه الكاميرا نحو الـ QR أعلاه</li>
-              <li>انتظر ثوانٍ وسيتم الربط تلقائيًا ✨</li>
-            </ol>
-          </div>
-
-          <div className="flex items-center gap-2 text-sm text-slate-400 justify-center">
-            <Spinner size="sm" />
-            <span>في انتظار المسح...</span>
-          </div>
-
-          <div className="flex gap-3">
-            <button type="button" onClick={onClose} className="btn-secondary flex-1">إلغاء</button>
-            <button type="button" onClick={() => setConfirmed(true)} className="btn-primary flex-1">
-              <Check size={16} /> مسحت الـ QR
-            </button>
-          </div>
+      <div className="space-y-5">
+        <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800">
+          <div className="font-bold mb-2">⚠️ ربط واتساب عبر QR</div>
+          <p className="leading-relaxed">
+            ربط واتساب عبر مسح QR يتطلب خادمًا خاصًا يعمل ببروتوكول واتساب الداخلي.
+            هذه الميزة غير متوفرة حاليًا في النظام.
+          </p>
+          <p className="mt-2 leading-relaxed">
+            البديل المدعوم والرسمي هو <strong>WhatsApp Cloud API</strong> من Meta —
+            وهو آمن وموثوق ويعمل بشكل كامل من خلال هذا النظام.
+          </p>
         </div>
-      ) : (
-        <div className="text-center py-8 space-y-4">
-          <div className="h-20 w-20 rounded-full bg-green-100 flex items-center justify-center mx-auto">
-            <CheckCircle size={40} className="text-green-500" />
-          </div>
-          <div>
-            <div className="font-bold text-slate-900 text-xl">تم الربط بنجاح! 🎉</div>
-            <p className="text-sm text-slate-500 mt-1">واتساب جاهز لاستقبال الرسائل</p>
-          </div>
-          <button type="button" disabled={saving} onClick={finish} className="btn-primary w-full">
-            {saving ? <Spinner size="sm" /> : 'حفظ وإغلاق'}
-          </button>
+
+        <div className="rounded-xl bg-sky-50 border border-sky-200 p-4">
+          <div className="font-bold text-sky-800 mb-2 text-sm">📋 ما تحتاجه لـ Cloud API:</div>
+          <ul className="list-disc list-inside space-y-1 text-sm text-sky-700">
+            <li>حساب Meta for Developers (مجاني)</li>
+            <li>رقم هاتف مفعّل على WhatsApp Business</li>
+            <li>Phone Number ID و Access Token</li>
+          </ul>
         </div>
-      )}
+
+        <button type="button" onClick={goToApi} className="btn-primary w-full">
+          <Key size={16} /> الانتقال إلى Cloud API
+        </button>
+        <button type="button" onClick={onClose} className="btn-secondary w-full">إلغاء</button>
+      </div>
     </Modal>
   );
 }
@@ -473,25 +449,11 @@ function StepOAuth({ data, onClose, onSave }: {
   onClose: () => void;
   onSave: (cfg: Record<string, string>) => Promise<void>;
 }) {
-  const [done, setDone]   = useState(false);
-  const [saving, setSaving] = useState(false);
   const isFb = data.channelType === 'messenger';
   const isIg = data.channelType === 'instagram';
-
-  function openOAuth() {
-    const url = isFb
-      ? 'https://www.facebook.com/dialog/oauth?client_id=YOUR_APP_ID&scope=pages_messaging'
-      : 'https://api.instagram.com/oauth/authorize?client_id=YOUR_APP_ID&scope=instagram_basic,instagram_manage_messages';
-    const popup = window.open(url, '_blank', 'width=520,height=640');
-    // Simulate completion
-    setTimeout(() => { popup?.close(); setDone(true); }, 2500);
-  }
-
-  async function finish() {
-    setSaving(true);
-    await onSave({ method: 'oauth', platform: data.channelType, connected_at: new Date().toISOString() });
-    setSaving(false);
-  }
+  const [pageId, setPageId]           = useState(data.existingConfig?.page_id           ?? '');
+  const [pageToken, setPageToken]     = useState(data.existingConfig?.page_access_token ?? '');
+  const [saving, setSaving]           = useState(false);
 
   const gradient = isFb
     ? 'from-blue-500 to-blue-700'
@@ -500,53 +462,75 @@ function StepOAuth({ data, onClose, onSave }: {
     : 'from-blue-500 to-indigo-600';
 
   const Icon = isFb ? Facebook : isIg ? Instagram : Globe;
+  const docUrl = isFb ? CHANNEL_DOCS.messenger : CHANNEL_DOCS.instagram;
+
+  async function submit() {
+    setSaving(true);
+    await onSave({
+      method: 'api',
+      page_id: pageId.trim(),
+      page_access_token: pageToken.trim(),
+      platform: data.channelType,
+      connected_at: new Date().toISOString(),
+    });
+    setSaving(false);
+  }
 
   return (
-    <Modal title={`ربط ${data.channelLabel}`} onClose={onClose}>
-      {!done ? (
-        <div className="space-y-5">
-          <div className={`rounded-2xl bg-gradient-to-br ${gradient} p-6 text-center text-white`}>
-            <Icon size={44} className="mx-auto mb-3 opacity-90" />
-            <div className="font-bold text-lg">تسجيل الدخول بـ {data.channelLabel}</div>
-            <p className="text-sm opacity-80 mt-1">ستُفتح نافذة تسجيل الدخول</p>
-          </div>
+    <Modal title={`ربط ${data.channelLabel}`} onClose={onClose} wide>
+      <div className="space-y-4">
+        <div className={`rounded-2xl bg-gradient-to-br ${gradient} p-5 text-center text-white`}>
+          <Icon size={36} className="mx-auto mb-2 opacity-90" />
+          <div className="font-bold">ربط {data.channelLabel} عبر بيانات الصفحة</div>
+        </div>
 
-          <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 text-sm text-slate-600 space-y-1.5">
-            <div className="font-bold text-slate-800 mb-1">قبل الربط تأكد من:</div>
+        <div className="rounded-xl bg-sky-50 border border-sky-200 p-4 text-sm text-sky-800">
+          <div className="font-bold mb-2">📋 كيف تحصل على البيانات:</div>
+          <ol className="list-decimal list-inside space-y-1 text-sky-700">
+            <li>افتح <a href="https://developers.facebook.com" target="_blank" rel="noreferrer" className="underline font-semibold">Meta for Developers</a> وأنشئ تطبيقًا</li>
             {isFb && (
               <>
-                <div>• صفحة فيسبوك للأعمال (Business Page)</div>
-                <div>• صلاحية مدير الصفحة</div>
+                <li>أضف منتج <strong>Messenger</strong> وفعّله</li>
+                <li>احصل على <strong>Page ID</strong> و<strong>Page Access Token</strong> من إعدادات التطبيق</li>
               </>
             )}
             {isIg && (
               <>
-                <div>• حساب إنستغرام Professional</div>
-                <div>• ربط الحساب بصفحة فيسبوك</div>
+                <li>أضف منتج <strong>Instagram</strong> وربطه بصفحة فيسبوك</li>
+                <li>احصل على <strong>Page ID</strong> و<strong>Page Access Token</strong> من إعدادات التطبيق</li>
               </>
             )}
-          </div>
+            <li>أدخل البيانات أدناه واضغط ربط</li>
+          </ol>
+        </div>
 
-          <button type="button" onClick={openOAuth} className={`btn-primary w-full bg-gradient-to-r ${gradient} border-0`}>
-            <Icon size={18} />
-            تسجيل الدخول بـ {data.channelLabel}
-          </button>
-          <button type="button" onClick={onClose} className="btn-secondary w-full">إلغاء</button>
+        <div>
+          <label className="label">Page ID <span className="text-red-500">*</span></label>
+          <input className="input font-mono text-sm" placeholder="1234567890"
+            value={pageId}
+            onChange={(e) => setPageId(e.target.value)} />
         </div>
-      ) : (
-        <div className="text-center py-8 space-y-4">
-          <div className="h-20 w-20 rounded-full bg-green-100 flex items-center justify-center mx-auto">
-            <CheckCircle size={40} className="text-green-500" />
-          </div>
-          <div>
-            <div className="font-bold text-slate-900 text-xl">تم تسجيل الدخول! 🎉</div>
-            <p className="text-sm text-slate-500 mt-1">{data.channelLabel} جاهز للربط</p>
-          </div>
-          <button type="button" disabled={saving} onClick={finish} className="btn-primary w-full">
-            {saving ? <Spinner size="sm" /> : 'تأكيد الربط'}
+        <div>
+          <label className="label">Page Access Token <span className="text-red-500">*</span></label>
+          <input className="input font-mono text-sm" placeholder="EAABxxxx..."
+            value={pageToken}
+            onChange={(e) => setPageToken(e.target.value)} />
+        </div>
+
+        {docUrl && (
+          <a href={docUrl} target="_blank" rel="noreferrer"
+            className="flex items-center gap-2 text-sm text-sky-600 hover:underline">
+            <ExternalLink size={14} /> دليل الربط الرسمي
+          </a>
+        )}
+
+        <div className="flex gap-3 pt-2 border-t border-slate-100">
+          <button type="button" onClick={onClose} className="btn-secondary flex-1">إلغاء</button>
+          <button type="button" disabled={!pageId.trim() || !pageToken.trim() || saving} onClick={submit} className="btn-primary flex-1">
+            {saving ? <Spinner size="sm" /> : <><Check size={16} /> ربط الآن</>}
           </button>
         </div>
-      )}
+      </div>
     </Modal>
   );
 }
@@ -754,7 +738,7 @@ export function ConnectionsPage() {
 
     if (step === 'choose')    return <StepChoose   data={modal} goTo={goTo} onClose={closeModal} />;
     if (step === 'wa_api')    return <StepWaApi    data={modal} onClose={closeModal} onSave={(cfg) => saveChannel(cfg)} />;
-    if (step === 'wa_qr')     return <StepWaQr     onClose={closeModal} onSave={(cfg) => saveChannel(cfg)} />;
+    if (step === 'wa_qr')     return <StepWaQr     onClose={closeModal} goToApi={() => goTo('wa_api')} />;
     if (step === 'tg_token')  return <StepTgToken  data={modal} onClose={closeModal} onSave={(cfg, lbl) => saveChannel(cfg, lbl)} />;
     if (step === 'tg_qr')     return <StepTgQr     onClose={closeModal} onSave={(cfg) => saveChannel(cfg)} />;
     if (step === 'oauth')     return <StepOAuth    data={modal} onClose={closeModal} onSave={(cfg) => saveChannel(cfg)} />;
