@@ -684,7 +684,18 @@ export function ConnectionsPage() {
   function closeModal() { setModal(null); }
 
   async function saveChannel(cfg: Record<string, string>, nameOverride?: string) {
-    if (!user || !merchant || !modal) { toast('يرجى تسجيل الدخول أولاً', false); return; }
+    if (!user || !modal) { toast('يرجى تسجيل الدخول أولاً', false); return; }
+    let merchantId = merchant?.id;
+    if (!merchantId) {
+      const { data: m } = await supabase.from('merchants').select('id').eq('owner_id', user.id).maybeSingle();
+      if (m?.id) {
+        merchantId = m.id;
+      } else {
+        const { data: created, error } = await supabase.from('merchants').insert({ owner_id: user.id, company_name: 'متجري' }).select('id').single();
+        if (error || !created?.id) { toast('يرجى تسجيل الدخول أولاً', false); return; }
+        merchantId = created.id;
+      }
+    }
     try {
       if (modal.existingId) {
         const { error } = await supabase.from('channels')
@@ -693,7 +704,7 @@ export function ConnectionsPage() {
         if (error) throw error;
       } else {
         const { error } = await supabase.from('channels').insert({
-          merchant_id: merchant.id,
+          merchant_id: merchantId,
           type:        modal.channelType,
           name:        nameOverride ?? modal.channelLabel,
           status:      'connected',

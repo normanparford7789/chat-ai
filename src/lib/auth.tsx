@@ -24,18 +24,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const skipMerchantLoad = useRef(false);
 
   async function loadMerchant(uid: string): Promise<Merchant | null> {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('merchants')
       .select('*')
       .eq('owner_id', uid)
       .maybeSingle();
     let m = data as Merchant | null;
-    if (!m) {
-      const { data: created } = await supabase
+    if (!m && !error) {
+      const { data: created, error: insErr } = await supabase
         .from('merchants')
         .insert({ owner_id: uid, company_name: 'متجري' })
         .select('*')
         .single();
+      if (insErr) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to create merchant:', insErr.message);
+      }
       m = (created ?? null) as Merchant | null;
     }
     setMerchant(m);
