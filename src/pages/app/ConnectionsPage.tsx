@@ -685,17 +685,23 @@ export function ConnectionsPage() {
 
   async function saveChannel(cfg: Record<string, string>, nameOverride?: string) {
     if (!user || !modal) { toast('يرجى تسجيل الدخول أولاً', false); return; }
-    let merchantId = merchant?.id;
-    if (!merchantId) {
-      const { data: mId, error: rpcErr } = await supabase.rpc('get_or_create_merchant');
-      if (rpcErr || !mId) { toast('يرجى تسجيل الدخول أولاً', false); return; }
-      merchantId = mId as string;
+
+    // Always fetch a fresh merchant ID to avoid stale-context or JWT-refresh race conditions
+    const { data: freshMId, error: rpcErr } = await supabase.rpc('get_or_create_merchant');
+    if (rpcErr || !freshMId) {
+      // eslint-disable-next-line no-console
+      console.error('get_or_create_merchant failed:', rpcErr?.message);
+      toast('تعذّر تحديد المتجر. يرجى إعادة تسجيل الدخول والمحاولة مجدداً.', false);
+      return;
     }
+    const merchantId = freshMId as string;
+
     try {
       if (modal.existingId) {
         const { error } = await supabase.from('channels')
           .update({ status: 'connected', config: cfg, last_sync: new Date().toISOString() })
-          .eq('id', modal.existingId);
+          .eq('id', modal.existingId)
+          .eq('merchant_id', merchantId);
         if (error) throw error;
       } else {
         const { error } = await supabase.from('channels').insert({
@@ -712,7 +718,10 @@ export function ConnectionsPage() {
       reload();
       toast(`✅ تم ربط ${nameOverride ?? modal.channelLabel} بنجاح`);
     } catch (e: unknown) {
-      toast(`❌ ${e instanceof Error ? e.message : 'خطأ أثناء الحفظ'}`, false);
+      const errMsg = (e as { message?: string })?.message;
+      // eslint-disable-next-line no-console
+      console.error('saveChannel error:', e);
+      toast(`❌ ${errMsg ?? 'خطأ أثناء الحفظ'}`, false);
     }
   }
 
